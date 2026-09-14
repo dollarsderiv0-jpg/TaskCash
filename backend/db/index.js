@@ -1,5 +1,5 @@
 /**
- * TaskCash Kenya — database layer.
+ * TaskCash — database layer.
  *
  * Two interchangeable modes behind one async interface:
  *  - "pg":   PostgreSQL / Supabase (schema.sql auto-applied at boot, see server.js)

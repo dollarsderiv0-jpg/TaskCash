@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Referrals — TaskCash Kenya</title>
+<title>Referrals — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -98,7 +98,7 @@ function renderTeam() {
     ? rows.map((u) => `
       <div class="feed-item">
         <span><strong>${UI.esc(u.username)}</strong><br><span class="muted small">joined ${UI.timeAgo(u.joined)}</span></span>
-        <span style="color:var(--neon);font-weight:700">${UI.kes(u.commission)}</span>
+        <span style="color:var(--neon);font-weight:700">${UI.money(u.commission, null)}</span>
       </div>`).join('')
     : '<p class="muted small">No referrals here yet — share your link to start building your team.</p>';
 }
@@ -117,12 +117,12 @@ document.querySelectorAll('.pill-tabs .pill-tab').forEach((b) => {
     const data = await API.get('/api/notifications/referrals');
     UI.el('r-l1').textContent = data.stats.l1_count;
     UI.el('r-l2').textContent = data.stats.l2_count;
-    UI.el('r-earn').textContent = UI.kes(data.stats.total_earned);
+    UI.el('r-earn').textContent = UI.money(data.stats.total_earned, null);
     UI.el('ref-link').value = data.link;
     UI.el('ref-code').value = data.code;
     UI.el('copy-link').onclick = () => UI.copy(data.link);
     UI.el('copy-code').onclick = () => UI.copy(data.code);
-    UI.el('wa-share').href = `https://wa.me/?text=${encodeURIComponent(`Earn rewards for completing tasks on TaskCash Kenya 🇰🇪 Sign up with my link: ${data.link}`)}`;
+    UI.el('wa-share').href = `https://wa.me/?text=${encodeURIComponent(`Earn rewards for completing tasks on TaskCash 🌍 Sign up with my link: ${data.link}`)}`;
     teamData = { l1: data.l1, l2: data.l2 };
     renderTeam();
   } catch (e) { UI.toast(e.message, 'error'); }

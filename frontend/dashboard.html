@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dashboard — TaskCash Kenya</title>
+<title>Dashboard — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -48,8 +48,8 @@
   <div class="container">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
       <div>
-        <h1 style="margin:0;font-size:1.6rem">Karibu, <span id="uname" style="color:var(--neon)">…</span> 👋</h1>
-        <p class="muted small" style="margin:4px 0 0">Here's your earning snapshot. Earnings come from tasks — not investments.</p>
+        <h1 style="margin:0;font-size:1.6rem">Welcome back, <span id="uname" style="color:var(--neon)">…</span> 👋</h1>
+        <p class="muted small" style="margin:4px 0 0">Country: <span id="s-country">—</span> · Currency: <span id="s-currency">—</span> · Earnings come from tasks, not investments.</p>
       </div>
       <button class="btn btn-primary" id="checkin-btn">📅 Daily check-in</button>
     </div>
@@ -59,22 +59,22 @@
       <div class="glass stat fade-up">
         <div class="icon">💰</div>
         <div class="label">Available balance</div>
-        <div class="value count-up" id="s-available">KES 0.00</div>
+        <div class="value count-up" id="s-available">—</div>
       </div>
       <div class="glass stat fade-up fade-up-1">
         <div class="icon">⏳</div>
         <div class="label">Pending balance</div>
-        <div class="value count-up" id="s-pending">KES 0.00</div>
+        <div class="value count-up" id="s-pending">—</div>
       </div>
       <div class="glass stat fade-up fade-up-2">
         <div class="icon">📈</div>
         <div class="label">Total earnings</div>
-        <div class="value count-up" id="s-total">KES 0.00</div>
+        <div class="value count-up" id="s-total">—</div>
       </div>
       <div class="glass stat fade-up fade-up-3">
         <div class="icon">🤝</div>
         <div class="label">Referral earnings</div>
-        <div class="value count-up" id="s-referral">KES 0.00</div>
+        <div class="value count-up" id="s-referral">—</div>
       </div>
       <div class="glass stat fade-up fade-up-1">
         <div class="icon">🎯</div>
@@ -134,7 +134,7 @@
 
 <footer>
   <div class="container">
-    <p class="disclaimer">TaskCash Kenya is a rewards platform — not an investment scheme. Earnings depend on tasks completed, referrals and eligible sponsored activities, and are never guaranteed. Withdrawals require account verification and pass anti-fraud review.</p>
+    <p class="disclaimer">TaskCash is a rewards platform — not an investment scheme. Earnings depend on tasks completed, referrals and eligible sponsored activities, and are never guaranteed. Withdrawals require account verification and pass anti-fraud review.</p>
   </div>
 </footer>
 
@@ -176,14 +176,19 @@ async function loadNotifs() {
 UI.el('read-all').onclick = async () => { await API.post('/api/notifications/read-all').catch(() => {}); UI.toast('All marked as read'); loadNotifs(); };
 loadNotifs();
 
-// Stats
+// Stats — all money rendered via the centralized formatter with the
+// user's own account currency (never hard-coded).
 async function loadStats() {
   try {
-    const { stats } = await API.get('/api/stats');
-    UI.countUp(UI.el('s-available'), stats.available);
-    UI.countUp(UI.el('s-pending'), stats.pending);
-    UI.countUp(UI.el('s-total'), stats.total_earned);
-    UI.countUp(UI.el('s-referral'), stats.referral_earnings);
+    const { stats, country, currency_code } = await API.get('/api/stats');
+    const cur = currency_code || UI.userCurrency();
+    localStorage.setItem('tc_currency', cur);
+    UI.el('s-country').textContent = country && country.name ? country.name : '—';
+    UI.el('s-currency').textContent = cur;
+    UI.countUp(UI.el('s-available'), stats.available, { prefix: cur + ' ' });
+    UI.countUp(UI.el('s-pending'), stats.pending, { prefix: cur + ' ' });
+    UI.countUp(UI.el('s-total'), stats.total_earned, { prefix: cur + ' ' });
+    UI.countUp(UI.el('s-referral'), stats.referral_earnings, { prefix: cur + ' ' });
     UI.el('s-tasks').textContent = stats.tasks_completed;
     UI.el('s-package').textContent = stats.package ? `${stats.package.name} · ${stats.package.daily_tasks}/day` : 'Free tier (3/day)';
   } catch (e) { UI.toast(e.message, 'error'); }
@@ -204,7 +209,7 @@ async function loadHistory() {
         : h.status === 'rejected' ? '<span class="badge badge-danger">rejected</span>' : '';
       return `<div class="feed-item">
         <span><strong>${UI.esc(h.title)}</strong> ${badge}<br><span class="muted small">${UI.timeAgo(h.date)}</span></span>
-        <span style="font-weight:800;color:${pos ? 'var(--neon)' : 'var(--danger)'}">${pos ? '+' : ''}${UI.kes(h.amount)}</span>
+        <span style="font-weight:800;color:${pos ? 'var(--neon)' : 'var(--danger)'}">${pos ? '+' : ''}${UI.money(h.amount, h.currency_code)}</span>
       </div>`;
     }).join('');
   } catch (e) { UI.toast(e.message, 'error'); }
@@ -234,7 +239,7 @@ loadHistory();
     const { leaderboard } = await API.get('/api/leaderboard');
     UI.el('leader-mini').innerHTML = leaderboard.slice(0, 5).map((l) => `
       <div class="feed-item"><span>#${l.rank} ${UI.esc(l.username)}</span>
-      <span style="color:var(--neon);font-weight:700">${UI.kes0(l.total_earned)}</span></div>`).join('');
+      <span style="color:var(--neon);font-weight:700">${UI.money0(l.total_earned, null)}</span></div>`).join('');
   } catch { UI.el('leader-mini').innerHTML = '<p class="muted small">—</p>'; }
   try {
     const { announcements } = await API.get('/api/notifications/announcements');

@@ -32,17 +32,17 @@ async function sendMail({ to, subject, text, html }) {
 function layout(title, body) {
   return `<!doctype html><html><body style="margin:0;background:#0a0f0a;font-family:Arial,sans-serif">
   <div style="max-width:520px;margin:0 auto;padding:32px 24px;color:#e8f5e9">
-    <div style="font-size:22px;font-weight:700;color:#39ff14;margin-bottom:16px">TaskCash Kenya</div>
+    <div style="font-size:22px;font-weight:700;color:#39ff14;margin-bottom:16px">TaskCash</div>
     <h2 style="color:#fff;margin:0 0 12px">${title}</h2>
     <div style="font-size:15px;line-height:1.6;color:#cfd8dc">${body}</div>
-    <p style="margin-top:28px;font-size:12px;color:#78909c">TaskCash Kenya · Earnings come from completed tasks, referrals and sponsored activities — never guaranteed investment returns.</p>
+    <p style="margin-top:28px;font-size:12px;color:#78909c">TaskCash · Earnings come from completed tasks, referrals and sponsored activities — never guaranteed investment returns.</p>
   </div></body></html>`;
 }
 
 function sendVerificationMail(user, url) {
   return sendMail({
     to: user.email,
-    subject: 'Verify your TaskCash Kenya account',
+    subject: 'Verify your TaskCash account',
     html: layout('Confirm your email',
       `<p>Hi ${user.fullname || user.username},</p>
        <p>Tap the button below to verify your email address.</p>
@@ -54,7 +54,7 @@ function sendVerificationMail(user, url) {
 function sendResetMail(user, url) {
   return sendMail({
     to: user.email,
-    subject: 'Reset your TaskCash Kenya password',
+    subject: 'Reset your TaskCash password',
     html: layout('Password reset',
       `<p>Hi ${user.fullname || user.username},</p>
        <p>We received a request to reset your password. This link expires in 1 hour.</p>

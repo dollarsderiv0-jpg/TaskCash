@@ -96,9 +96,12 @@ app.use((err, req, res, next) => {
 // ── Boot ──────────────────────────────────────────────────
 (async () => {
   await db.init();
+  if (!config.isProd) {
+    require('./db/migrate').run().catch((e) => console.warn('[migrate]', e.message));
+  }
   const port = config.port;
   server.listen(port, () => {
-    console.log(`\n  TaskCash Kenya → http://localhost:${port}  (${db.mode} mode)`);
+    console.log(`\n  TaskCash → http://localhost:${port}  (${db.mode} mode)`);
     console.log(`  M-Pesa: ${config.mpesa.enabled ? 'live Daraja' : 'demo mode'} · WS: /ws\n`);
   });
 })();

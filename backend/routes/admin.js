@@ -1,6 +1,9 @@
 const express = require('express');
 const { Table } = require('../db');
 const { wrap, r2, txnRef } = require('../lib/helpers');
+const { formatMoney } = require('../lib/money');
+const { countries } = require('../lib/countries');
+const { setTaskRewards, getTaskRewards, validateRewardsPayload } = require('../services/rewards');
 const { requireAdmin } = require('../middleware/auth');
 const { notify, approveCompletion, rejectCompletion } = require('../services/earnings');
 const kyc = require('../services/kyc');
@@ -33,6 +36,7 @@ router.get('/users', wrap(async (req, res) => {
     users: rows.slice(0, 200).map((u) => ({
       id: u.id, fullname: u.fullname, username: u.username, email: u.email, phone: u.phone,
       balance: r2(u.balance), pending_balance: r2(u.pending_balance), total_earned: r2(u.total_earned),
+      currency_code: u.currency_code || null, country_code: u.country_code || null, country: u.country,
       status: u.status, role: u.role, kyc_status: u.kyc_status, email_verified: u.email_verified,
       tasks_completed: u.tasks_completed, created_at: u.created_at, package_id: u.package_id,
     })),
@@ -64,7 +68,7 @@ router.post('/users/:id/adjust-balance', wrap(async (req, res) => {
   if (!delta) return res.status(400).json({ error: 'Provide a non-zero delta' });
   await users.adjust(u.id, 'balance', delta);
   await users.adjust(u.id, 'total_earned', Math.max(delta, 0));
-  await notify(u.id, 'Balance adjusted', `Support ${delta > 0 ? 'credited' : 'debited'} KES ${Math.abs(delta).toFixed(2)} ${delta > 0 ? 'to' : 'from'} your wallet.`, delta > 0 ? 'success' : 'warning');
+  await notify(u.id, 'Balance adjusted', `Support ${delta > 0 ? 'credited' : 'debited'} ${formatMoney(Math.abs(delta), u.currency_code)} ${delta > 0 ? 'to' : 'from'} your wallet.`, delta > 0 ? 'success' : 'warning');
   res.json({ ok: true, balance: r2((await users.byId(u.id)).balance) });
 }));
 
@@ -108,7 +112,7 @@ router.post('/withdrawals/:id/approve', wrap(async (req, res) => {
     reference: txnRef('W'),
   });
   await users.adjust(w.user_id, 'pending_balance', -Number(w.amount));
-  await notify(w.user_id, 'Withdrawal approved 💸', `KES ${r2(w.net_amount).toFixed(2)} sent via ${w.method === 'mpesa' ? 'M-Pesa' : 'bank transfer'}. Reference ${w.reference}.`, 'success');
+  await notify(w.user_id, 'Withdrawal approved 💸', `${formatMoney(r2(w.net_amount), w.currency_code)} sent via ${w.method === 'mpesa' ? 'M-Pesa' : 'bank transfer'}. Reference ${w.reference}.`, 'success');
   ws.broadcastAdmins({ type: 'admin_alert', payload: { kind: 'withdrawal_done', id: w.id } });
   res.json({ ok: true });
 }));
@@ -143,7 +147,7 @@ router.post('/deposits/:id/approve', wrap(async (req, res) => {
   if (!d || d.status !== 'pending') return res.status(404).json({ error: 'Pending deposit not found' });
   await deposits.update(d.id, { status: 'approved', reviewed_by: req.user.id, reviewed_at: new Date().toISOString(), reference: txnRef('D') });
   await users.adjust(d.user_id, 'balance', r2(d.amount));
-  await notify(d.user_id, 'Deposit approved ✅', `KES ${r2(d.amount).toFixed(2)} added to your balance.`, 'success');
+  await notify(d.user_id, 'Deposit approved ✅', `${formatMoney(r2(d.amount), d.currency_code)} added to your balance.`, 'success');
   res.json({ ok: true });
 }));
 
@@ -157,17 +161,47 @@ router.post('/deposits/:id/reject', wrap(async (req, res) => {
 // ── Tasks CRUD ────────────────────────────────────────────
 router.get('/tasks', wrap(async (_req, res) => {
   const rows = await tasks.all({ orderBy: 'created_at DESC', limit: 300 });
-  res.json({ tasks: rows.map((t) => ({ ...t, reward: r2(t.reward) })) });
+  const out = [];
+  for (const t of rows) {
+    const rewards = await getTaskRewards(t.id);
+    out.push({
+      ...t,
+      reward: r2(t.reward),
+      availability_type: t.availability_type || 'global',
+      countries: t.countries ? (Array.isArray(t.countries) ? t.countries : JSON.parse(t.countries || '[]')) : [],
+      country_rewards: rewards.map((rw) => ({
+        country_code: rw.country_code,
+        currency_code: rw.currency_code,
+        reward_amount: r2(rw.reward_amount),
+      })),
+    });
+  }
+  res.json({ tasks: out });
 }));
 
 router.post('/tasks', wrap(async (req, res) => {
-  const { title, description, category, reward, time_required, verification_type, url, instructions, min_package, daily_limit, verification_code } = req.body || {};
-  if (!title || !description || !reward) return res.status(400).json({ error: 'Title, description and reward are required' });
+  const { title, description, category, reward, time_required, verification_type, url, instructions, min_package, daily_limit, verification_code, availability_type, countries: taskCountries, rewards } = req.body || {};
+  if (!title || !description) return res.status(400).json({ error: 'Title and description are required' });
+
+  const countryRewards = validateRewardsPayload(rewards);
+  // Global fallback reward: first configured country reward, or explicit value.
+  const fallbackReward = countryRewards.length ? countryRewards[0].reward_amount : r2(reward);
+  if (!(fallbackReward > 0)) return res.status(400).json({ error: 'A reward is required (global reward or per-country rewards)' });
+
+  const availType = ['global', 'countries'].includes(availability_type) ? availability_type : 'global';
+  const validCodes = new Set(countries.map((c) => c.code));
+  const picked = availType === 'countries'
+    ? (Array.isArray(taskCountries) ? taskCountries.map((c) => String(c).toUpperCase()).filter((c) => validCodes.has(c)) : [])
+    : [];
+  if (availType === 'countries' && !picked.length) return res.status(400).json({ error: 'Select at least one country for country-restricted tasks' });
+
   const t = await tasks.create({
     title: String(title).slice(0, 160),
     description: String(description).slice(0, 4000),
     category: String(category || 'website').slice(0, 40),
-    reward: r2(reward),
+    reward: fallbackReward,
+    availability_type: availType,
+    countries: JSON.stringify(picked),
     time_required: time_required ? String(time_required).slice(0, 40) : null,
     verification_type: ['code', 'screenshot', 'manual', 'auto'].includes(verification_type) ? verification_type : 'manual',
     url: url ? String(url).slice(0, 500) : null,
@@ -175,8 +209,12 @@ router.post('/tasks', wrap(async (req, res) => {
     min_package: min_package || null,
     daily_limit: Math.max(parseInt(daily_limit, 10) || 1, 1),
     verification_code: verification_code ? String(verification_code).slice(0, 20).toUpperCase() : null,
+    status: ['active', 'inactive'].includes(req.body.status) ? req.body.status : 'active',
+    start_date: req.body.start_date || null,
+    end_date: req.body.end_date || null,
     created_by: req.user.id,
   });
+  await setTaskRewards(t.id, countryRewards);
   res.json({ ok: true, task: t });
 }));
 
@@ -191,7 +229,22 @@ router.put('/tasks/:id', wrap(async (req, res) => {
   if (req.body.daily_limit !== undefined) patch.daily_limit = Math.max(parseInt(req.body.daily_limit, 10) || 1, 1);
   if (req.body.verification_type && ['code', 'screenshot', 'manual', 'auto'].includes(req.body.verification_type)) patch.verification_type = req.body.verification_type;
   if (req.body.status && ['active', 'inactive'].includes(req.body.status)) patch.status = req.body.status;
+  if (req.body.start_date !== undefined) patch.start_date = req.body.start_date || null;
+  if (req.body.end_date !== undefined) patch.end_date = req.body.end_date || null;
+  if (req.body.availability_type && ['global', 'countries'].includes(req.body.availability_type)) {
+    patch.availability_type = req.body.availability_type;
+    const validCodes = new Set(countries.map((c) => c.code));
+    patch.countries = JSON.stringify(
+      req.body.availability_type === 'countries'
+        ? (Array.isArray(req.body.countries) ? req.body.countries.map((c) => String(c).toUpperCase()).filter((c) => validCodes.has(c)) : [])
+        : []
+    );
+  }
   await tasks.update(t.id, patch);
+  // Per-country rewards are replaced wholesale when provided.
+  if (req.body.rewards !== undefined) {
+    await setTaskRewards(t.id, validateRewardsPayload(req.body.rewards));
+  }
   res.json({ ok: true, task: await tasks.byId(t.id) });
 }));
 
@@ -210,7 +263,8 @@ router.get('/completions', wrap(async (req, res) => {
     const u = await users.byId(c.user_id);
     out.push({
       id: c.id, user: u ? u.username : '?', task: t ? t.title : 'Daily check-in',
-      status: c.status, proof: c.proof, reward: t ? r2(t.reward) : r2(c.reward_paid),
+      status: c.status, proof: c.proof, reward: r2(c.reward_paid || (t ? t.reward : 0)),
+      currency_code: c.currency_code || (u ? u.currency_code : null),
       created_at: c.created_at, task_id: c.task_id, user_id: c.user_id,
     });
   }
@@ -275,6 +329,8 @@ router.post('/promos', wrap(async (req, res) => {
   const p = await promos.create({
     code: String(code).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20),
     amount: r2(amount),
+    currency_code: ['KES', 'USD', 'GBP', 'NGN', 'TZS', 'UGX', 'ZAR', 'GHS', 'INR', 'CAD', 'AUD', 'EUR'].includes(String(req.body.currency_code || '').toUpperCase())
+      ? String(req.body.currency_code).toUpperCase() : 'KES',
     max_uses: Math.max(parseInt(max_uses, 10) || 100, 1),
     expires_at: expires_at || null,
   });

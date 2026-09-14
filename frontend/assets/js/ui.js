@@ -18,11 +18,27 @@ const UI = {
   },
 
   // ── Formatting ──
-  kes(n, opts = {}) {
+  // Centralized money formatter. The currency shown is ALWAYS the currency
+  // passed in (the user's account currency, or a transaction's recorded
+  // currency). No hard-coded KES/$/£ anywhere else in the frontend.
+  money(n, currencyCode, opts = {}) {
     const v = Number(n) || 0;
-    return 'KES ' + v.toLocaleString('en-KE', { minimumFractionDigits: opts.decimals ?? 2, maximumFractionDigits: opts.decimals ?? 2 });
+    const cc = String(currencyCode || this.userCurrency() || 'KES').toUpperCase();
+    return cc + ' ' + v.toLocaleString('en-US', { minimumFractionDigits: opts.decimals ?? 2, maximumFractionDigits: opts.decimals ?? 2 });
   },
-  kes0(n) { return this.kes(n, { decimals: 0 }); },
+  money0(n, cc) { return this.money(n, cc, { decimals: 0 }); },
+  userCurrency() {
+    const u = (window.API && API.user()) || null;
+    return (u && (u.currency_code || u.currency)) || localStorage.getItem('tc_currency') || 'KES';
+  },
+  userCountry() {
+    const u = (window.API && API.user()) || null;
+    return (u && (u.country_code || '')) || '';
+  },
+  isKenya() { return this.userCountry() === 'KE'; },
+  // Back-compat alias (legacy pages): formats with the user's currency.
+  kes(n, opts = {}) { return this.money(n, null, opts); },
+  kes0(n) { return this.money(n, null, { decimals: 0 }); },
   esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -33,7 +49,7 @@ const UI = {
     if (s < 60) return 'just now';
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-    return new Date(date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' });
+    return new Date(date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   },
 
   // ── Toasts ──
@@ -70,13 +86,14 @@ const UI = {
   },
 
   // ── Count-up animation ──
-  countUp(el, target, { prefix = 'KES ', decimals = 2, duration = 1200 } = {}) {
+  countUp(el, target, { prefix = null, decimals = 2, duration = 1200 } = {}) {
+    const cur = prefix === null ? this.userCurrency() + ' ' : prefix;
     const start = 0; const t0 = performance.now();
     function frame(t) {
       const p = Math.min((t - t0) / duration, 1);
       const eased = 1 - Math.pow(1 - p, 3);
       const val = start + (target - start) * eased;
-      el.textContent = prefix + val.toLocaleString('en-KE', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+      el.textContent = cur + val.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
       if (p < 1) requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);

@@ -5,6 +5,7 @@ const num = (v, d) => (v !== undefined && v !== '' && !Number.isNaN(Number(v)) ?
 const bool = (v, d) => (v === undefined || v === '' ? d : ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase()));
 
 const config = {
+  brand: 'TaskCash',
   env: process.env.NODE_ENV || 'development',
   isProd: (process.env.NODE_ENV || 'development') === 'production',
   port: num(process.env.PORT, 3000),
@@ -23,7 +24,7 @@ const config = {
   },
 
   admin: {
-    email: process.env.ADMIN_EMAIL || 'admin@taskcash.co.ke',
+    email: process.env.ADMIN_EMAIL || 'admin@taskcash.app',
     password: process.env.ADMIN_PASSWORD || 'Admin@1234',
     phone: process.env.ADMIN_PHONE || '0712345678',
   },
@@ -44,7 +45,7 @@ const config = {
     port: num(process.env.SMTP_PORT, 587),
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
-    from: process.env.MAIL_FROM || 'TaskCash Kenya <no-reply@taskcash.co.ke>',
+    from: process.env.MAIL_FROM || 'TaskCash <no-reply@taskcash.app>',
   },
 
   wallet: {

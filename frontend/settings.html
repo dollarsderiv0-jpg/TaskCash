@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings — TaskCash Kenya</title>
+<title>Settings — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -43,12 +43,13 @@
           <input class="input" id="p-fullname">
         </div>
         <div class="field">
-          <label for="p-phone">Phone (M-Pesa)</label>
+          <label for="p-phone">Phone<span id="p-phone-note"></span></label>
           <input class="input" id="p-phone">
         </div>
         <div class="field">
-          <label for="p-country">Country</label>
-          <input class="input" id="p-country">
+          <label for="p-country">Country <span class="muted">(fixed at registration)</span></label>
+          <input class="input" id="p-country" disabled>
+          <div class="hint">Changing country would change your account currency — contact support instead. Existing balances are never converted automatically.</div>
         </div>
         <div class="field">
           <label for="p-avatar">Avatar (optional)</label>
@@ -128,7 +129,8 @@ const fileToDataUrl = (input) => new Promise((resolve) => {
     const { user } = await API.get('/api/auth/me');
     UI.el('p-fullname').value = user.fullname || '';
     UI.el('p-phone').value = user.phone || '';
-    UI.el('p-country').value = user.country || 'Kenya';
+    UI.el('p-country').value = user.country || '';
+    UI.el('p-phone-note').textContent = (user.country_code === 'KE') ? ' (M-Pesa)' : '';
     UI.el('email-state').innerHTML = user.email_verified
       ? '<span class="badge">✅ Email verified</span>'
       : `<span class="badge badge-warn">Not verified</span> <span class="muted small">(${UI.esc(user.email)})</span>`;
@@ -144,7 +146,6 @@ UI.el('p-save').onclick = async () => {
     await API.put('/api/auth/profile', {
       fullname: UI.el('p-fullname').value.trim(),
       phone: UI.el('p-phone').value.trim(),
-      country: UI.el('p-country').value.trim(),
       ...(avatar ? { avatar } : {}),
     });
     UI.toast('Profile saved');

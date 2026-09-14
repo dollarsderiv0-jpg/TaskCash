@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin — TaskCash Kenya</title>
+<title>Admin — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -66,9 +66,11 @@
 </section>
 
 <script src="/assets/js/api.js"></script>
+<script src="/assets/js/countries.js"></script>
 <script src="/assets/js/ui.js"></script>
 <script>
 UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+const COUNTRY_LIST = COUNTRIES;
 const me = UI.requireAdmin();
 UI.el('logout').addEventListener('click', async (e) => {
   e.preventDefault();
@@ -88,8 +90,8 @@ const badge = (st) => st === 'approved' ? '<span class="badge">approved</span>'
   try {
     const { totals, series } = await API.get('/api/admin/analytics');
     S('t-users').textContent = totals.users;
-    S('t-deposits').textContent = UI.kes0(totals.deposits);
-    S('t-withdrawals').textContent = UI.kes0(totals.withdrawals);
+    S('t-deposits').textContent = UI.money0(totals.deposits, 'KES');
+    S('t-withdrawals').textContent = UI.money0(totals.withdrawals, 'KES');
     S('t-tasks').textContent = totals.tasks_approved;
     S('t-pending').textContent = totals.tasks_pending;
     S('t-susp').textContent = totals.suspended;
@@ -103,8 +105,8 @@ const badge = (st) => st === 'approved' ? '<span class="badge">approved</span>'
       data: {
         labels,
         datasets: [
-          { label: 'Deposits (KES)', data: series.deposits.map((r) => r.total), borderColor: '#39ff14', backgroundColor: 'rgba(57,255,20,0.08)', fill: true, tension: 0.35 },
-          { label: 'Withdrawals (KES)', data: series.withdrawals.map((r) => r.total), borderColor: '#ff5470', backgroundColor: 'rgba(255,84,112,0.06)', fill: true, tension: 0.35 },
+          { label: 'Deposits (mixed currencies)', data: series.deposits.map((r) => r.total), borderColor: '#39ff14', backgroundColor: 'rgba(57,255,20,0.08)', fill: true, tension: 0.35 },
+          { label: 'Withdrawals (mixed currencies)', data: series.withdrawals.map((r) => r.total), borderColor: '#ff5470', backgroundColor: 'rgba(255,84,112,0.06)', fill: true, tension: 0.35 },
         ],
       },
       options: { plugins: { legend: { labels: { color: fontColor } } }, scales: { x: { ticks: { color: fontColor }, grid: { color: gridColor } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } },
@@ -155,11 +157,11 @@ function renderWithdrawals({ withdrawals }) {
       <thead><tr><th>Date</th><th>User</th><th>Method</th><th>Amount</th><th>Net</th><th>Destination</th><th>Actions</th></tr></thead>
       <tbody>${withdrawals.map((w) => `
         <tr>
-          <td>${new Date(w.created_at).toLocaleDateString('en-KE')}</td>
+          <td>${new Date(w.created_at).toLocaleDateString()}</td>
           <td>${UI.esc(w.username)}</td>
           <td>${UI.esc(w.method)}</td>
-          <td><strong>${UI.kes(w.amount)}</strong><br><span class="muted small">fee ${UI.kes(w.fee)}</span></td>
-          <td style="color:var(--neon);font-weight:700">${UI.kes(w.net_amount)}</td>
+          <td><strong>${UI.money(w.amount, w.currency_code)}</strong><br><span class="muted small">fee ${UI.money(w.fee, w.currency_code)}</span></td>
+          <td style="color:var(--neon);font-weight:700">${UI.money(w.net_amount, w.currency_code)}</td>
           <td class="mono small">${UI.esc(w.destination)}</td>
           <td>
             <button class="btn btn-primary btn-sm" data-approve="${w.id}">Approve</button>
@@ -191,10 +193,10 @@ function renderDeposits({ deposits }) {
       <thead><tr><th>Date</th><th>User</th><th>Phone</th><th>Amount</th><th>Ref</th><th>Actions</th></tr></thead>
       <tbody>${deposits.map((d) => `
         <tr>
-          <td>${new Date(d.created_at).toLocaleDateString('en-KE')}</td>
+          <td>${new Date(d.created_at).toLocaleDateString()}</td>
           <td>${UI.esc(d.username)}</td>
           <td class="mono small">${UI.esc(d.phone || '')}</td>
-          <td><strong>${UI.kes(d.amount)}</strong></td>
+          <td><strong>${UI.money(d.amount, d.currency_code)}</strong></td>
           <td class="mono small">${UI.esc(d.reference || d.provider_ref || '—')}</td>
           <td>
             <button class="btn btn-primary btn-sm" data-approve="${d.id}">Approve</button>
@@ -221,10 +223,10 @@ function renderCompletions({ completions }) {
       <thead><tr><th>Date</th><th>User</th><th>Task</th><th>Reward</th><th>Proof</th><th>Actions</th></tr></thead>
       <tbody>${completions.map((c) => `
         <tr>
-          <td>${new Date(c.created_at).toLocaleDateString('en-KE')}</td>
+          <td>${new Date(c.created_at).toLocaleDateString()}</td>
           <td>${UI.esc(c.user)}</td>
           <td>${UI.esc(c.task)}</td>
-          <td><strong>${UI.kes0(c.reward)}</strong></td>
+          <td><strong>${UI.money0(c.reward, c.currency_code)}</strong></td>
           <td>${c.proof ? (String(c.proof).startsWith('data:image') ? `<a href="${c.proof}" target="_blank">view image</a>` : `<span class="mono small">${UI.esc(String(c.proof).slice(0, 40))}</span>`) : '—'}</td>
           <td>
             <button class="btn btn-primary btn-sm" data-approve="${c.id}">Approve</button>
@@ -258,7 +260,7 @@ function renderUsers({ users }) {
         <tr>
           <td><strong>${UI.esc(u.username)}</strong><br><span class="muted small">${UI.esc(u.fullname)}</span></td>
           <td class="small">${UI.esc(u.email)}<br>${UI.esc(u.phone)}</td>
-          <td><strong>${UI.kes(u.balance)}</strong><br><span class="muted small">earned ${UI.kes0(u.total_earned)}</span></td>
+          <td><strong>${UI.money(u.balance, u.currency_code)}</strong><br><span class="muted small">earned ${UI.money0(u.total_earned, u.currency_code)} · ${UI.esc(u.country_code || '—')}</span></td>
           <td>${u.status === 'suspended' ? '<span class="badge badge-danger">suspended</span>' : '<span class="badge">active</span>'} ${badge(u.kyc_status)}</td>
           <td>
             <button class="btn btn-ghost btn-sm" data-susp="${u.id}" data-cur="${u.status}">${u.status === 'suspended' ? 'Unsuspend' : 'Suspend'}</button>
@@ -294,13 +296,14 @@ function renderTasks({ tasks }) {
   S('panel').innerHTML = `
     <button class="btn btn-primary btn-sm" id="new-task" style="margin-bottom:14px">+ New task</button>
     <div class="table-wrap"><table class="tbl">
-      <thead><tr><th>Title</th><th>Category</th><th>Reward</th><th>Verify</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Title</th><th>Category</th><th>Reward</th><th>Verify</th><th>Availability</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>${tasks.map((t) => `
         <tr>
           <td>${UI.esc(t.title)}</td>
           <td>${UI.esc(t.category)}</td>
-          <td><strong>${UI.kes0(t.reward)}</strong></td>
+          <td><strong>${UI.kes0(t.reward)}</strong>${t.country_rewards && t.country_rewards.length ? `<br><span class="muted small">${t.country_rewards.length} country reward(s)</span>` : ''}</td>
           <td>${UI.esc(t.verification_type)}</td>
+          <td>${t.availability_type === 'countries' ? `<span class="badge badge-warn">${(t.countries || []).join(', ')}</span>` : '<span class="badge">global</span>'}</td>
           <td>${t.status === 'active' ? '<span class="badge">active</span>' : '<span class="badge badge-gray">inactive</span>'}</td>
           <td>
             <button class="btn btn-ghost btn-sm" data-edit='${encodeURIComponent(JSON.stringify(t))}'>Edit</button>
@@ -330,7 +333,31 @@ function taskForm(t = null) {
     <div class="grid-2">
       <div class="field"><label>Category</label>
         <select class="input" id="f-cat">${['video', 'social', 'survey', 'website', 'affiliate', 'app', 'referral', 'checkin'].map((c) => `<option ${t && t.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-      <div class="field"><label>Reward (KES)</label><input class="input" id="f-reward" type="number" value="${t ? t.reward : 20}"></div>
+      <div class="field"><label>Global fallback reward (in user's own currency)</label><input class="input" id="f-reward" type="number" value="${t ? t.reward : 20}"><div class="hint">Used when a country has no specific reward configured below.</div></div>
+    </div>
+    <div class="field"><label>Availability</label>
+      <select class="input" id="f-avail">
+        <option value="global" ${!t || t.availability_type !== 'countries' ? 'selected' : ''}>🌍 Global — all countries</option>
+        <option value="countries" ${t && t.availability_type === 'countries' ? 'selected' : ''}>📍 Selected countries only</option>
+      </select>
+    </div>
+    <div class="field" id="f-countries-wrap" style="display:${t && t.availability_type === 'countries' ? '' : 'none'}">
+      <label>Countries (Ctrl/Cmd-click for multiple)</label>
+      <select class="input" id="f-countries" multiple size="6">
+        ${COUNTRY_LIST.map((c) => `<option value="${c.code}" ${t && (t.countries || []).includes(c.code) ? 'selected' : ''}>${c.name} (${c.code})</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>Rewards by country <span class="muted">(separate configured amounts — no currency conversion)</span></label>
+      <div id="f-rewards-rows"></div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <select class="input" id="f-rew-country" style="max-width:220px">
+          ${COUNTRY_LIST.map((c) => `<option value="${c.code}">${c.name} — ${c.currency_code}</option>`).join('')}
+        </select>
+        <input class="input" id="f-rew-amount" type="number" placeholder="Amount" style="max-width:140px">
+        <button class="btn btn-ghost btn-sm" id="f-rew-add" type="button">+ Add</button>
+      </div>
+      <div class="hint">Example: Kenya → 500 KES, United States → 5 USD, United Kingdom → 5 GBP for the same task.</div>
     </div>
     <div class="grid-2">
       <div class="field"><label>Time required</label><input class="input" id="f-time" value="${UI.esc(t ? (t.time_required || '') : '5 min')}"></div>
@@ -345,7 +372,49 @@ function taskForm(t = null) {
     <div class="field"><label>Min package (blank = everyone)</label>
       <select class="input" id="f-pkg"><option value="">— none —</option>${['Starter', 'Silver', 'Gold', 'Platinum'].map((p) => `<option ${t && t.min_package === p ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
     <div class="field"><label>Instructions</label><textarea class="input" id="f-instr">${UI.esc(t ? (t.instructions || '') : '')}</textarea></div>
+    <div class="grid-2">
+      <div class="field"><label>Start date (optional)</label><input class="input" id="f-start" type="date" value="${t && t.start_date ? String(t.start_date).slice(0, 10) : ''}"></div>
+      <div class="field"><label>End date (optional)</label><input class="input" id="f-end" type="date" value="${t && t.end_date ? String(t.end_date).slice(0, 10) : ''}"></div>
+    </div>
+    <div class="field"><label>Status</label>
+      <select class="input" id="f-status">
+        <option value="active" ${!t || t.status === 'active' ? 'selected' : ''}>active</option>
+        <option value="inactive" ${t && t.status === 'inactive' ? 'selected' : ''}>inactive</option>
+      </select>
+    </div>
     <button class="btn btn-primary btn-block" id="f-save">${t ? 'Save changes' : 'Create task'}</button>`);
+
+  // Per-country reward rows: task + country + currency + amount.
+  const rewardsState = (t && t.country_rewards ? t.country_rewards.map((r) => ({ ...r })) : []).slice();
+  const rewardMeta = Object.fromEntries(COUNTRY_LIST.map((c) => [c.code, c.currency_code]));
+  function renderRewardRows() {
+    const host = m.querySelector('#f-rewards-rows');
+    host.innerHTML = rewardsState.length ? rewardsState.map((r, i) => `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-rew="${i}">
+        <span class="badge">${UI.esc(r.country_code)}</span>
+        <span class="small">${UI.esc(rewardMeta[r.country_code] || r.currency_code || '')}</span>
+        <input class="input" type="number" value="${r.reward_amount}" data-rew-amt style="max-width:130px">
+        <button class="btn btn-danger btn-sm" data-rew-del type="button">✕</button>
+      </div>`).join('') : '<p class="muted small" style="margin:0">No country-specific rewards — the global fallback applies everywhere.</p>';
+    host.querySelectorAll('[data-rew]').forEach((rowEl) => {
+      const idx = Number(rowEl.dataset.rew);
+      rowEl.querySelector('[data-rew-amt]').onchange = (e) => { rewardsState[idx].reward_amount = Number(e.target.value) || 0; };
+      rowEl.querySelector('[data-rew-del]').onclick = () => { rewardsState.splice(idx, 1); renderRewardRows(); };
+    });
+  }
+  renderRewardRows();
+  m.querySelector('#f-rew-add').onclick = () => {
+    const cc = m.querySelector('#f-rew-country').value;
+    const amt = Number(m.querySelector('#f-rew-amount').value);
+    if (!cc || !(amt > 0)) { UI.toast('Pick a country and a positive amount', 'error'); return; }
+    if (rewardsState.some((r) => r.country_code === cc)) { UI.toast(`${cc} already has a reward — edit it below`, 'error'); return; }
+    rewardsState.push({ country_code: cc, currency_code: rewardMeta[cc], reward_amount: amt });
+    m.querySelector('#f-rew-amount').value = '';
+    renderRewardRows();
+  };
+  m.querySelector('#f-avail').onchange = () => {
+    UI.el('f-countries-wrap').style.display = m.querySelector('#f-avail').value === 'countries' ? '' : 'none';
+  };
 
   m.querySelector('#f-save').onclick = async () => {
     const body = {
@@ -360,6 +429,12 @@ function taskForm(t = null) {
       verification_code: m.querySelector('#f-code').value.trim().toUpperCase() || null,
       min_package: m.querySelector('#f-pkg').value || null,
       instructions: m.querySelector('#f-instr').value.trim() || null,
+      status: m.querySelector('#f-status').value,
+      start_date: m.querySelector('#f-start').value || null,
+      end_date: m.querySelector('#f-end').value || null,
+      availability_type: m.querySelector('#f-avail').value,
+      countries: Array.from(m.querySelector('#f-countries').selectedOptions || []).map((o) => o.value),
+      rewards: rewardsState,
     };
     try {
       if (t) await API.put(`/api/admin/tasks/${t.id}`, body);
@@ -403,7 +478,7 @@ function renderPackages({ packages }) {
       <tbody>${packages.map((p) => `
         <tr>
           <td><strong>${UI.esc(p.name)}</strong><br><span class="muted small">${UI.esc((p.benefits || '').slice(0, 50))}</span></td>
-          <td>${UI.kes0(p.price)}</td>
+          <td>${UI.money0(p.price, 'KES')}<br><span class="muted small">in user's own currency</span></td>
           <td>${p.daily_tasks}</td>
           <td>${p.duration_days}d</td>
           <td>${p.is_active ? '✅' : '—'}</td>
@@ -431,7 +506,7 @@ function pkgForm(p = null) {
     <h3>${p ? 'Edit' : 'New'} package</h3>
     <div class="field"><label>Name</label><input class="input" id="pk-name" value="${UI.esc(p ? p.name : '')}"></div>
     <div class="grid-2">
-      <div class="field"><label>Price (KES)</label><input class="input" id="pk-price" type="number" value="${p ? p.price : 500}"></div>
+      <div class="field"><label>Price (in each user's own account currency)</label><input class="input" id="pk-price" type="number" value="${p ? p.price : 5}"></div>
       <div class="field"><label>Daily tasks</label><input class="input" id="pk-tasks" type="number" value="${p ? p.daily_tasks : 6}"></div>
     </div>
     <div class="field"><label>Duration (days)</label><input class="input" id="pk-dur" type="number" value="${p ? p.duration_days : 30}"></div>
@@ -457,7 +532,10 @@ function renderPromos({ promos }) {
   S('panel').innerHTML = `
     <div class="copy-row" style="max-width:420px;margin-bottom:14px">
       <input class="input" id="pr-code" placeholder="CODE" style="text-transform:uppercase">
-      <input class="input" id="pr-amt" type="number" placeholder="KES">
+      <input class="input" id="pr-amt" type="number" placeholder="Amount">
+      <select class="input" id="pr-cur" style="max-width:110px">
+        ${['KES', 'USD', 'GBP', 'NGN', 'TZS', 'UGX', 'ZAR', 'GHS', 'INR', 'CAD', 'AUD', 'EUR'].map((c) => `<option>${c}</option>`).join('')}
+      </select>
       <button class="btn btn-primary btn-sm" id="pr-add">Create</button>
     </div>
     <div class="table-wrap"><table class="tbl">
@@ -465,14 +543,14 @@ function renderPromos({ promos }) {
       <tbody>${promos.map((p) => `
         <tr>
           <td class="mono">${UI.esc(p.code)}</td>
-          <td>${UI.kes0(p.amount)}</td>
+          <td>${UI.money0(p.amount, p.currency_code)}</td>
           <td>${p.used_count}/${p.max_uses}</td>
           <td><button class="btn btn-danger btn-sm" data-del="${p.id}">Delete</button></td>
         </tr>`).join('')}</tbody>
     </table></div>`;
   S('pr-add').onclick = async () => {
     try {
-      await API.post('/api/admin/promos', { code: S('pr-code').value.trim(), amount: Number(S('pr-amt').value) });
+      await API.post('/api/admin/promos', { code: S('pr-code').value.trim(), amount: Number(S('pr-amt').value), currency_code: S('pr-cur').value });
       UI.toast('Promo created'); render();
     } catch (e) { UI.toast(e.message, 'error'); }
   };

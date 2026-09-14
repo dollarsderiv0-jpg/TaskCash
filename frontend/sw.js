@@ -1,4 +1,4 @@
-/* TaskCash Kenya service worker — offline app-shell caching */
+/* TaskCash service worker — offline app-shell caching */
 const CACHE = 'taskcash-v1';
 const SHELL = [
   '/',

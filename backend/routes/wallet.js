@@ -2,6 +2,8 @@ const express = require('express');
 const { Table } = require('../db');
 const config = require('../config');
 const { wrap, r2, toMpesaFormat, isValidKenyanPhone } = require('../lib/helpers');
+const { formatMoney } = require('../lib/money');
+const { depositMethods, withdrawalMethods, isMpesaCountry } = require('../lib/countries');
 const { requireAuth } = require('../middleware/auth');
 const { stkPush, demoCallbackBody } = require('../services/mpesa');
 const { notify } = require('../services/earnings');
@@ -16,18 +18,48 @@ const promos = new Table('promo_codes');
 const promoRedemptions = new Table('promo_redemptions');
 const notifications = new Table('notifications');
 
+// ── Deposit methods available to the current user ────────
+router.get('/deposit-methods', requireAuth, wrap(async (req, res) => {
+  const user = await users.byId(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({
+    country_code: user.country_code || null,
+    currency_code: user.currency_code || null,
+    methods: depositMethods(user.country_code),
+  });
+}));
+
+// ── Withdrawal methods available to the current user ─────
+router.get('/withdraw-methods', requireAuth, wrap(async (req, res) => {
+  const user = await users.byId(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({
+    country_code: user.country_code || null,
+    currency_code: user.currency_code || null,
+    methods: withdrawalMethods(user.country_code),
+  });
+}));
+
 // ── Deposits ──────────────────────────────────────────────
 router.post('/deposit', requireAuth, wrap(async (req, res) => {
+  const user = await users.byId(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  // M-Pesa (Daraja) is implemented for Kenyan accounts only.
+  if (!isMpesaCountry(user.country_code)) {
+    return res.status(403).json({ error: 'M-Pesa deposits are currently available in Kenya only' });
+  }
+
   const { amount, phone } = req.body || {};
   const amt = r2(Number(amount));
-  if (!amt || amt < config.wallet.minDeposit) return res.status(400).json({ error: `Minimum deposit is KES ${config.wallet.minDeposit}` });
-  if (amt > 150000) return res.status(400).json({ error: 'Maximum deposit is KES 150,000' });
+  if (!amt || amt < config.wallet.minDeposit) return res.status(400).json({ error: `Minimum deposit is ${formatMoney(config.wallet.minDeposit, user.currency_code, 0)}` });
+  if (amt > 150000) return res.status(400).json({ error: `Maximum deposit is ${formatMoney(150000, user.currency_code, 0)}` });
   if (!isValidKenyanPhone(phone)) return res.status(400).json({ error: 'Enter a valid M-Pesa number (07XX… or 2547XX…)' });
 
   const mpesaPhone = toMpesaFormat(phone);
   const deposit = await deposits.create({
     user_id: req.user.id,
     amount: amt,
+    currency_code: user.currency_code || 'KES',
     payment_method: 'mpesa',
     phone: mpesaPhone,
     status: 'pending',
@@ -85,8 +117,14 @@ router.post('/withdraw', requireAuth, wrap(async (req, res) => {
 
   const { amount, method, destination } = req.body || {};
   const amt = r2(Number(amount));
+  const cur = user.currency_code || 'KES';
+  // Only payout methods actually implemented for this user's country.
+  const available = withdrawalMethods(user.country_code).filter((m) => m.implemented).map((m) => m.id);
+  if (!available.includes(String(method || ''))) {
+    return res.status(400).json({ error: 'That payout method is not available in your country yet' });
+  }
   if (!amt || amt < config.wallet.minWithdrawal) {
-    return res.status(400).json({ error: `Minimum withdrawal is KES ${config.wallet.minWithdrawal}` });
+    return res.status(400).json({ error: `Minimum withdrawal is ${formatMoney(config.wallet.minWithdrawal, cur, 0)}` });
   }
   if (amt > Number(user.balance)) return res.status(400).json({ error: 'Amount exceeds available balance' });
 
@@ -101,7 +139,7 @@ router.post('/withdraw', requireAuth, wrap(async (req, res) => {
     .filter((w) => String(w.created_at).slice(0, 10) === today && w.status !== 'rejected')
     .reduce((s, w) => s + Number(w.amount), 0);
   if (todaySum + amt > config.wallet.withdrawalDailyLimit) {
-    return res.status(429).json({ error: `Daily withdrawal limit is KES ${config.wallet.withdrawalDailyLimit}` });
+    return res.status(429).json({ error: `Daily withdrawal limit is ${formatMoney(config.wallet.withdrawalDailyLimit, cur, 0)}` });
   }
 
   let dest = String(destination || '').trim();
@@ -119,10 +157,11 @@ router.post('/withdraw', requireAuth, wrap(async (req, res) => {
   await users.adjust(user.id, 'pending_balance', amt);
   const wd = await withdrawals.create({
     user_id: user.id, amount: amt, fee, net_amount: net,
+    currency_code: cur,
     method, destination: dest, status: 'pending',
   });
 
-  await notify(user.id, 'Withdrawal requested', `KES ${amt.toFixed(2)} (net KES ${net.toFixed(2)} after fee) is pending admin approval.`, 'info');
+  await notify(user.id, 'Withdrawal requested', `${formatMoney(amt, cur)} (net ${formatMoney(net, cur)} after fee) is pending admin approval.`, 'info');
   ws.broadcastAdmins({ type: 'admin_alert', payload: { kind: 'withdrawal', id: wd.id } });
 
   res.json({
@@ -134,6 +173,11 @@ router.post('/withdraw', requireAuth, wrap(async (req, res) => {
 router.get('/withdrawals', requireAuth, wrap(async (req, res) => {
   const rows = await withdrawals.all({ where: { user_id: req.user.id }, orderBy: 'created_at DESC', limit: 50 });
   res.json({ withdrawals: rows.map((w) => ({ ...w, amount: r2(w.amount), fee: r2(w.fee), net_amount: r2(w.net_amount) })) });
+}));
+
+router.get('/deposits', requireAuth, wrap(async (req, res) => {
+  const rows = await deposits.all({ where: { user_id: req.user.id }, orderBy: 'created_at DESC', limit: 50 });
+  res.json({ deposits: rows.map((d) => ({ ...d, amount: r2(d.amount) })) });
 }));
 
 // ── Packages ──────────────────────────────────────────────
@@ -148,7 +192,7 @@ router.post('/packages/:id/purchase', requireAuth, wrap(async (req, res) => {
 
   const user = await users.byId(req.user.id);
   if (Number(user.balance) < Number(pkg.price)) {
-    return res.status(400).json({ error: `Insufficient balance. This package costs KES ${r2(pkg.price)} — deposit via M-Pesa first.` });
+    return res.status(400).json({ error: `Insufficient balance. This package costs ${formatMoney(r2(pkg.price), user.currency_code)}.` });
   }
 
   const expires = new Date(Date.now() + pkg.duration_days * 86400000).toISOString();
@@ -172,13 +216,15 @@ router.post('/promo/redeem', requireAuth, wrap(async (req, res) => {
     return res.status(409).json({ error: 'You already redeemed this code' });
   }
 
+  const me = await users.byId(req.user.id);
+  const cur = me ? me.currency_code : 'KES';
   await promoRedemptions.create({ code_id: promo.id, user_id: req.user.id });
   await promos.adjust(promo.id, 'used_count', 1);
   await users.adjust(req.user.id, 'balance', promo.amount);
   await users.adjust(req.user.id, 'total_earned', promo.amount);
-  await notify(req.user.id, 'Promo code redeemed 🎁', `${code}: KES ${r2(promo.amount).toFixed(2)} credited to your balance.`, 'success');
+  await notify(req.user.id, 'Promo code redeemed 🎁', `${code}: ${formatMoney(r2(promo.amount), cur)} credited to your balance.`, 'success');
 
-  res.json({ ok: true, amount: r2(promo.amount), message: `KES ${r2(promo.amount).toFixed(2)} added via ${code}!` });
+  res.json({ ok: true, amount: r2(promo.amount), currency_code: cur, message: `${formatMoney(r2(promo.amount), cur)} added via ${code}!` });
 }));
 
 module.exports = router;

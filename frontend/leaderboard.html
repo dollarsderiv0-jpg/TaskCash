@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leaderboard — TaskCash Kenya</title>
+<title>Leaderboard — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -63,7 +63,7 @@ UI.el('logout').addEventListener('click', async (e) => {
     UI.el('lb-body').innerHTML = leaderboard.map((l) => `
       <tr>
         <td><strong>${medals[l.rank] || '#' + l.rank}</strong> ${UI.esc(l.username)}</td>
-        <td style="font-weight:700;color:var(--neon)">${UI.kes(l.total_earned)}</td>
+        <td style="font-weight:700;color:var(--neon)">${UI.money(l.total_earned, l.currency_code)}</td>
         <td>${l.tasks}</td>
       </tr>`).join('') || '<tr><td colspan="3" class="muted">No earners yet.</td></tr>';
   } catch (e) { UI.toast(e.message, 'error'); }

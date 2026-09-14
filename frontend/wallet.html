@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wallet — TaskCash Kenya</title>
+<title>Wallet — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -41,27 +41,33 @@
     </div>
 
     <div class="grid-2">
-      <!-- Deposit -->
-      <div class="glass card">
-        <h3 style="margin-top:0">📲 Deposit via M-Pesa</h3>
-        <p class="muted small" style="margin-top:-6px">STK Push — confirm on your phone. Min KES 50.</p>
-        <div class="field">
-          <label for="dep-amount">Amount (KES)</label>
-          <input class="input" id="dep-amount" type="number" min="50" value="500" inputmode="numeric">
+      <!-- Deposit: M-Pesa is only offered to Kenyan accounts -->
+      <div class="glass card" id="dep-card">
+        <h3 style="margin-top:0">📲 Deposit</h3>
+        <div id="dep-methods"><p class="muted small">Checking available deposit methods…</p></div>
+        <div id="dep-mpesa-form" style="display:none">
+          <p class="muted small" style="margin-top:-6px">M-Pesa STK Push — confirm on your phone. Min <span class="cur-min-dep">50</span>.</p>
+          <div class="field">
+            <label for="dep-amount">Amount (<span class="cur-label">KES</span>)</label>
+            <input class="input" id="dep-amount" type="number" min="50" value="500" inputmode="numeric">
+          </div>
+          <div class="chip-row" style="margin-bottom:14px">
+            <button class="pill-tab" data-amt="100">100</button>
+            <button class="pill-tab" data-amt="500">500</button>
+            <button class="pill-tab" data-amt="1000">1,000</button>
+            <button class="pill-tab" data-amt="2500">2,500</button>
+            <button class="pill-tab" data-amt="5000">5,000</button>
+          </div>
+          <div class="field">
+            <label for="dep-phone">M-Pesa phone</label>
+            <input class="input" id="dep-phone" placeholder="07XX XXX XXX" inputmode="tel">
+          </div>
+          <button class="btn btn-primary btn-block" id="dep-btn">Initiate STK Push</button>
+          <div id="dep-status" style="margin-top:12px"></div>
         </div>
-        <div class="chip-row" style="margin-bottom:14px">
-          <button class="pill-tab" data-amt="100">100</button>
-          <button class="pill-tab" data-amt="500">500</button>
-          <button class="pill-tab" data-amt="1000">1,000</button>
-          <button class="pill-tab" data-amt="2500">2,500</button>
-          <button class="pill-tab" data-amt="5000">5,000</button>
+        <div id="dep-none" style="display:none">
+          <p class="muted small">Online deposits are coming soon for your country. Meanwhile, you can still earn from tasks and withdraw when payout methods open up.</p>
         </div>
-        <div class="field">
-          <label for="dep-phone">M-Pesa phone</label>
-          <input class="input" id="dep-phone" placeholder="07XX XXX XXX" inputmode="tel">
-        </div>
-        <button class="btn btn-primary btn-block" id="dep-btn">Initiate STK Push</button>
-        <div id="dep-status" style="margin-top:12px"></div>
 
         <div class="divider"></div>
         <strong class="small">Packages — unlock more daily tasks</strong>
@@ -71,25 +77,23 @@
       <!-- Withdraw -->
       <div class="glass card">
         <h3 style="margin-top:0">💸 Withdraw</h3>
-        <p class="muted small" style="margin-top:-6px">Min KES 100 · 2% fee · admin review ≤ 24h. Requires account verification.</p>
+        <p class="muted small" style="margin-top:-6px">Min <span class="cur-min-wd">100</span> · 2% fee · admin review ≤ 24h. Requires account verification.</p>
         <div class="field">
-          <label for="wd-amount">Amount (KES)</label>
+          <label for="wd-amount">Amount (<span class="cur-label">KES</span>)</label>
           <input class="input" id="wd-amount" type="number" min="100" inputmode="numeric" placeholder="e.g. 500">
         </div>
         <div class="field">
           <label for="wd-method">Method</label>
-          <select class="input" id="wd-method">
-            <option value="mpesa">M-Pesa</option>
-            <option value="bank">Bank transfer</option>
-          </select>
+          <select class="input" id="wd-method"></select>
+          <div class="hint">Methods not yet implemented in your country are marked <em>Coming soon</em> and cannot be selected.</div>
         </div>
         <div class="field">
-          <label for="wd-dest" id="wd-dest-label">M-Pesa number</label>
+          <label for="wd-dest" id="wd-dest-label">Destination</label>
           <input class="input" id="wd-dest" placeholder="07XX XXX XXX">
         </div>
         <div class="glass" style="padding:12px;margin-bottom:14px" id="wd-summary">
-          <div style="display:flex;justify-content:space-between" class="small"><span class="muted">Fee (2%)</span><span id="wd-fee">KES 0.00</span></div>
-          <div style="display:flex;justify-content:space-between" class="small" style="margin-top:4px"><span class="muted">You receive</span><strong id="wd-net" style="color:var(--neon)">KES 0.00</strong></div>
+          <div style="display:flex;justify-content:space-between" class="small"><span class="muted">Fee (2%)</span><span id="wd-fee">—</span></div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px"><span class="muted">You receive</span><strong id="wd-net" style="color:var(--neon)">—</strong></div>
         </div>
         <button class="btn btn-primary btn-block" id="wd-btn">Request withdrawal</button>
 
@@ -136,14 +140,44 @@ UI.el('logout').addEventListener('click', async (e) => {
   API.clearSession(); location.href = '/login.html';
 });
 UI.el('wd-dest').value = me.phone || '';
+const CUR = me.currency_code || UI.userCurrency();
+const IS_KE = UI.isKenya();
+
+// Currency labels + deposit method visibility (M-Pesa only for Kenya)
+function applyCurrencyUI() {
+  document.querySelectorAll('.cur-label').forEach((el) => { el.textContent = CUR; });
+  document.querySelectorAll('.cur-min-dep').forEach((el) => { el.textContent = '50 ' + CUR; });
+  document.querySelectorAll('.cur-min-wd').forEach((el) => { el.textContent = '100 ' + CUR; });
+}
+applyCurrencyUI();
+
+// Which payout methods are actually implemented for this account?
+let wdMethods = [];
+async function loadMethods() {
+  try {
+    const { methods } = await API.get('/api/wallet/withdraw-methods');
+    wdMethods = methods || [];
+    const sel = UI.el('wd-method');
+    sel.innerHTML = wdMethods.map((m) =>
+      `<option value="${m.id}" ${m.implemented ? '' : 'disabled'}>${UI.esc(m.name)}${m.implemented ? '' : ' — coming soon'}</option>`
+    ).join('') || '<option value="">No payout methods available yet</option>';
+    const dm = await API.get('/api/wallet/deposit-methods').catch(() => ({ methods: [] }));
+    const depOk = (dm.methods || []).some((m) => m.implemented);
+    UI.el('dep-mpesa-form').style.display = depOk ? '' : 'none';
+    UI.el('dep-none').style.display = depOk ? 'none' : '';
+    UI.el('dep-methods').style.display = 'none';
+    updWdDest();
+  } catch { /* keep defaults */ }
+}
+loadMethods();
 
 // Balances
 async function loadBalances() {
   try {
     const { user } = await API.get('/api/auth/me');
-    UI.el('w-available').textContent = UI.kes(user.balance);
-    UI.el('w-pending').textContent = UI.kes(user.pending_balance);
-    UI.el('w-total').textContent = UI.kes(user.total_earned);
+    UI.el('w-available').textContent = UI.money(user.balance, user.currency_code);
+    UI.el('w-pending').textContent = UI.money(user.pending_balance, user.currency_code);
+    UI.el('w-total').textContent = UI.money(user.total_earned, user.currency_code);
   } catch (e) { UI.toast(e.message, 'error'); }
 }
 loadBalances();
@@ -182,8 +216,8 @@ function pollDeposit(id) {
       if (deposit.status !== 'pending') {
         clearInterval(pollTimer);
         if (deposit.status === 'approved') {
-          UI.toast(`Deposit confirmed — ${UI.kes(deposit.amount)} added! 🎉`, 'success', 6000);
-          UI.el('dep-status').innerHTML = `<div class="badge">✅ Deposit confirmed ${UI.kes(deposit.amount)}</div>`;
+          UI.toast(`Deposit confirmed — ${UI.money(deposit.amount, deposit.currency_code)} added! 🎉`, 'success', 6000);
+          UI.el('dep-status').innerHTML = `<div class="badge">✅ Deposit confirmed ${UI.money(deposit.amount, deposit.currency_code)}</div>`;
         } else {
           UI.toast('Deposit did not complete', 'error');
         }
@@ -197,16 +231,19 @@ function pollDeposit(id) {
 function updWdSummary() {
   const amt = Number(UI.el('wd-amount').value || 0);
   const fee = Math.round(amt * 2) / 100;
-  UI.el('wd-fee').textContent = UI.kes(fee);
-  UI.el('wd-net').textContent = UI.kes(Math.max(amt - fee, 0));
+  UI.el('wd-fee').textContent = UI.money(fee, CUR);
+  UI.el('wd-net').textContent = UI.money(Math.max(amt - fee, 0), CUR);
 }
 UI.el('wd-amount').addEventListener('input', updWdSummary);
+updWdSummary();
 
-UI.el('wd-method').onchange = () => {
+function updWdDest() {
+  const method = wdMethods.find((m) => m.id === UI.el('wd-method').value);
   const bank = UI.el('wd-method').value === 'bank';
-  UI.el('wd-dest-label').textContent = bank ? 'Bank account number' : 'M-Pesa number';
-  UI.el('wd-dest').placeholder = bank ? 'e.g. 1234567890' : '07XX XXX XXX';
-};
+  UI.el('wd-dest-label').textContent = bank ? 'Bank account number' : (method ? method.name : 'Destination');
+  UI.el('wd-dest').placeholder = bank ? 'e.g. 1234567890' : (IS_KE ? '07XX XXX XXX' : 'Account / destination details');
+}
+UI.el('wd-method').onchange = updWdDest;
 
 UI.el('wd-btn').onclick = async () => {
   const btn = UI.el('wd-btn');
@@ -240,7 +277,7 @@ async function loadPackages() {
     UI.el('pkg-list').innerHTML = packages.map((p) => `
       <div class="feed-item" style="align-items:center">
         <span><strong>${UI.esc(p.name)}</strong> · ${p.daily_tasks}/day<br><span class="muted small">${UI.esc((p.benefits || '').slice(0, 60))}</span></span>
-        <button class="btn btn-primary btn-sm" data-buy="${p.id}">${UI.kes0(p.price)}</button>
+        <button class="btn btn-primary btn-sm" data-buy="${p.id}">${UI.money0(p.price, CUR)}</button>
       </div>`).join('');
     UI.el('pkg-list').querySelectorAll('[data-buy]').forEach((b) => {
       b.onclick = async () => {
@@ -268,10 +305,10 @@ async function loadHistory() {
         : r.status === 'pending' ? '<span class="badge badge-warn">pending</span>'
         : '<span class="badge badge-danger">rejected</span>';
       const detail = histType === 'deposits'
-        ? `M-Pesa ${UI.esc(r.phone || '')} ${r.reference ? '· ' + UI.esc(r.reference) : ''}`
+        ? `${r.payment_method === 'mpesa' ? 'M-Pesa' : 'Deposit'} ${UI.esc(r.phone || '')} ${r.reference ? '· ' + UI.esc(r.reference) : ''}`
         : `${r.method === 'mpesa' ? 'M-Pesa' : 'Bank'} ${UI.esc(r.destination)} ${r.reference ? '· ' + UI.esc(r.reference) : ''}`;
-      return `<tr><td>${new Date(r.created_at).toLocaleDateString('en-KE')}</td><td>${detail}</td>
-        <td style="font-weight:700">${UI.kes(r.amount)}</td><td>${badge}</td></tr>`;
+      return `<tr><td>${new Date(r.created_at).toLocaleDateString()}</td><td>${detail}</td>
+        <td style="font-weight:700">${UI.money(r.amount, r.currency_code)}</td><td>${badge}</td></tr>`;
     }).join('');
   } catch (e) { tbody.innerHTML = `<tr><td colspan="4" class="muted">${UI.esc(e.message)}</td></tr>`; }
 }

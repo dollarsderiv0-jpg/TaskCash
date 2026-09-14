@@ -2,6 +2,8 @@ const express = require('express');
 const { Table } = require('../db');
 const config = require('../config');
 const { wrap, r2 } = require('../lib/helpers');
+const { formatMoney } = require('../lib/money');
+const { getCountry } = require('../lib/countries');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { notify } = require('../services/earnings');
 const ws = require('../lib/ws');
@@ -32,7 +34,10 @@ router.get('/stats', requireAuth, wrap(async (req, res) => {
   const pkg = u.package_id ? await packages.byId(u.package_id) : null;
   const pkgActive = pkg && new Date(u.package_expires) > new Date();
 
+  const geo = getCountry(u.country_code);
   res.json({
+    country: geo ? { code: geo.code, name: geo.name } : { code: u.country_code || null, name: u.country || null },
+    currency_code: u.currency_code || null,
     stats: {
       available: r2(u.balance),
       pending: r2(u.pending_balance),
@@ -80,14 +85,17 @@ router.get('/history', requireAuth, wrap(async (req, res) => {
   const type = String(req.query.type || 'all');
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
   const out = [];
+  const me = await users.byId(req.user.id);
+  const userCur = me ? me.currency_code : null;
 
   const addRows = (rows, kind) => rows.forEach((r) => out.push({
     id: `${kind}-${r.id}`, kind,
-    title: kind === 'deposit' ? 'M-Pesa deposit'
+    title: kind === 'deposit' ? (r.payment_method === 'mpesa' ? 'M-Pesa deposit' : 'Deposit')
       : kind === 'withdrawal' ? `Withdrawal (${r.method})`
       : kind === 'task' ? (r.task_title || 'Task reward')
       : 'Referral commission',
     amount: r2(kind === 'withdrawal' ? -Number(r.amount) : kind === 'task' ? Number(r.reward_paid || 0) : Number(r.amount || 0)),
+    currency_code: (r.currency_code || userCur).toUpperCase(),
     status: r.status, date: r.created_at,
     ref: r.reference || r.provider_ref || null,
   }));
@@ -121,7 +129,12 @@ router.get('/history', requireAuth, wrap(async (req, res) => {
 // Live public earnings feed (for homepage + dashboard)
 router.get('/feed', wrap(async (_req, res) => {
   const rows = await feed.all({ orderBy: 'created_at DESC', limit: 12 });
-  res.json({ feed: rows });
+  const out = [];
+  for (const f of rows) {
+    const u = f.user_id ? await users.byId(f.user_id) : null;
+    out.push({ ...f, amount: r2(f.amount), currency_code: (f.currency_code || (u ? u.currency_code : null) || null) });
+  }
+  res.json({ feed: out });
 }));
 
 // Daily check-in with streak bonus
@@ -136,17 +149,18 @@ router.post('/checkin', requireAuth, wrap(async (req, res) => {
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const streak = last === yesterday ? (u.checkin_streak || 0) + 1 : 1;
   const reward = r2(Math.min(config.wallet.checkInBase + (streak - 1), config.wallet.checkInCap));
+  const cur = u.currency_code || 'KES';
 
   await users.update(u.id, { checkin_streak: streak, last_checkin: today });
   await users.adjust(u.id, 'balance', reward);
   await users.adjust(u.id, 'total_earned', reward);
   await completions.create({
     user_id: u.id, task_id: null, proof: null, status: 'approved',
-    reward_paid: reward,
+    reward_paid: reward, currency_code: cur,
   });
-  await notify(u.id, 'Daily check-in ✅', `Day ${streak} streak! KES ${reward.toFixed(2)} bonus credited.`, 'success');
+  await notify(u.id, 'Daily check-in ✅', `Day ${streak} streak! ${formatMoney(reward, cur)} bonus credited.`, 'success');
 
-  res.json({ ok: true, reward, streak, message: `KES ${reward.toFixed(2)} added! Streak: ${streak} day(s)` });
+  res.json({ ok: true, reward, currency_code: cur, streak, message: `${formatMoney(reward, cur)} added! Streak: ${streak} day(s)` });
 }));
 
 // Leaderboard (opt-in via share stats)
@@ -155,7 +169,10 @@ router.get('/leaderboard', wrap(async (_req, res) => {
   res.json({
     leaderboard: rows.map((u, i) => ({
       rank: i + 1, username: u.username ? `${u.username.slice(0, 3)}***` : 'user***',
-      total_earned: r2(u.total_earned), tasks: u.tasks_completed || 0,
+      total_earned: r2(u.total_earned),
+      currency_code: u.currency_code || null,
+      country_code: u.country_code || null,
+      tasks: u.tasks_completed || 0,
     })),
   });
 }));

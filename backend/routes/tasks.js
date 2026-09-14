@@ -3,8 +3,10 @@ const { Table } = require('../db');
 const config = require('../config');
 const crypto = require('crypto');
 const { wrap, r2 } = require('../lib/helpers');
+const { formatMoney } = require('../lib/money');
 const { requireAuth } = require('../middleware/auth');
 const { notify } = require('../services/earnings');
+const { resolveReward, isTaskAvailable } = require('../services/rewards');
 
 const router = express.Router();
 const tasks = new Table('tasks');
@@ -44,14 +46,23 @@ router.get('/', requireAuth, wrap(async (req, res) => {
 
   const enriched = [];
   for (const t of active) {
+    // Availability: global tasks everywhere; country tasks only in listed countries.
+    if (!isTaskAvailable(t, user)) continue;
+
+    // Reward: resolved server-side from the user's country configuration.
+    const reward = await resolveReward(t, user);
     const minRank = packageRank(t.min_package);
     const locked = minRank > rank;
     const doneToday = await todaysCount(user.id, t.id);
     enriched.push({
       id: t.id, title: t.title, description: t.description, category: t.category,
-      reward: r2(t.reward), time_required: t.time_required,
+      reward: reward.amount,
+      currency_code: reward.currency_code,
+      reward_display: formatMoney(reward.amount, reward.currency_code, 0),
+      time_required: t.time_required,
       verification_type: t.verification_type, url: t.url,
       instructions: t.instructions, min_package: t.min_package,
+      availability_type: t.availability_type || 'global',
       locked, done_today: doneToday, daily_limit: t.daily_limit || 1,
       completed: doneToday >= (t.daily_limit || 1),
     });
@@ -60,6 +71,7 @@ router.get('/', requireAuth, wrap(async (req, res) => {
   res.json({
     tasks: enriched,
     daily_cap: dailyCap,
+    currency_code: user.currency_code,
     package: pkg ? { id: pkg.id, name: pkg.name, daily_tasks: pkg.daily_tasks } : null,
   });
 }));
@@ -73,6 +85,7 @@ router.get('/mine', requireAuth, wrap(async (req, res) => {
     out.push({
       id: c.id, task_id: c.task_id, task_title: t ? t.title : 'Daily check-in bonus',
       status: c.status, proof: c.proof, reward_paid: r2(c.reward_paid),
+      currency_code: c.currency_code || null,
       admin_note: c.admin_note || null, created_at: c.created_at,
     });
   }
@@ -88,11 +101,17 @@ router.post('/:id/submit', requireAuth, wrap(async (req, res) => {
   const task = await tasks.byId(req.params.id);
   if (!task || task.status !== 'active') return res.status(404).json({ error: 'Task not available' });
 
+  // Server-side availability check — country-restricted tasks enforced here.
+  if (!isTaskAvailable(task, user)) return res.status(403).json({ error: 'This task is not available in your country' });
+
   const pkg = await userActivePackage(user);
   const rank = pkg ? packageRank(pkg.name) : -1;
   if (packageRank(task.min_package) > rank) {
     return res.status(403).json({ error: `This task requires the ${task.min_package} package or higher` });
   }
+
+  // Reward resolved server-side — never trusted from the browser.
+  const reward = await resolveReward(task, user);
 
   // Daily caps
   const dailyCap = pkg ? pkg.daily_tasks : 3;
@@ -134,7 +153,8 @@ router.post('/:id/submit', requireAuth, wrap(async (req, res) => {
       user_id: user.id, task_id: task.id,
       proof: proof ? proof.slice(0, 500000) : null,
       status,
-      reward_paid: status === 'approved' ? r2(task.reward) : 0,
+      reward_paid: status === 'approved' ? reward.amount : 0,
+      currency_code: reward.currency_code,
       ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').slice(0, 60),
       ua: String(req.headers['user-agent'] || '').slice(0, 200),
     });
@@ -143,12 +163,14 @@ router.post('/:id/submit', requireAuth, wrap(async (req, res) => {
   }
 
   if (status === 'approved') {
-    // Auto-verified path → credit instantly via earnings engine
+    // Auto-verified path → credit instantly via earnings engine.
+    // The reward amount recorded on the completion row is the source of truth.
     const engine = require('../services/earnings');
-    await engine.approveCompletion({ ...completion, task });
+    await engine.approveCompletion({ ...completion, task, user });
     return res.json({
-      ok: true, status: 'approved', reward: r2(task.reward),
-      message: `Verified! KES ${r2(task.reward).toFixed(2)} added to your balance.`,
+      ok: true, status: 'approved', reward: reward.amount,
+      currency_code: reward.currency_code,
+      message: `Verified! ${formatMoney(reward.amount, reward.currency_code)} added to your balance.`,
     });
   }
 
@@ -161,6 +183,9 @@ router.post('/:id/video-verify', requireAuth, wrap(async (req, res) => {
   const task = await tasks.byId(req.params.id);
   if (!task || task.category !== 'video') return res.status(404).json({ error: 'Video task not found' });
 
+  const user = await users.byId(req.user.id);
+  if (!isTaskAvailable(task, user)) return res.status(403).json({ error: 'This task is not available in your country' });
+
   const { session, elapsed } = req.body || {};
   if (!session || !session.startsWith('vwatch-')) return res.status(400).json({ error: 'Invalid watch session' });
   const required = Math.max(parseInt(task.time_required, 10) || 30, 5); // seconds
@@ -168,19 +193,20 @@ router.post('/:id/video-verify', requireAuth, wrap(async (req, res) => {
     return res.status(400).json({ error: 'Watch the video to the end before claiming' });
   }
 
-  const user = await users.byId(req.user.id);
   if (await todaysCount(user.id, task.id) >= (task.daily_limit || 1)) {
     return res.status(429).json({ error: 'Already completed this task today' });
   }
 
+  const reward = await resolveReward(task, user);
   const completion = await completions.create({
     user_id: user.id, task_id: task.id,
     proof: `watch:${session}:${elapsed}s`,
-    status: 'approved', reward_paid: r2(task.reward),
+    status: 'approved', reward_paid: reward.amount,
+    currency_code: reward.currency_code,
   });
   const engine = require('../services/earnings');
-  await engine.approveCompletion({ ...completion, task });
-  res.json({ ok: true, reward: r2(task.reward), message: `KES ${r2(task.reward).toFixed(2)} added!` });
+  await engine.approveCompletion({ ...completion, task, user });
+  res.json({ ok: true, reward: reward.amount, currency_code: reward.currency_code, message: `${formatMoney(reward.amount, reward.currency_code)} added!` });
 }));
 
 // Issue a fresh watch session token

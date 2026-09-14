@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const { Table } = require('../db');
 const config = require('../config');
 const { wrap, referralCode, token, isValidKenyanPhone } = require('../lib/helpers');
+const { getCountry, resolveUserCountry, isMpesaCountry } = require('../lib/countries');
+const { formatMoney } = require('../lib/money');
 const { sign, requireAuth, issueCsrf } = require('../middleware/auth');
 const { sendVerificationMail, sendResetMail } = require('../services/mailer');
 const kyc = require('../services/kyc');
@@ -15,7 +17,9 @@ const notifications = new Table('notifications');
 
 const publicUser = (u) => ({
   id: u.id, fullname: u.fullname, username: u.username, email: u.email,
-  phone: u.phone, country: u.country, role: u.role, status: u.status,
+  phone: u.phone, country: u.country, country_code: u.country_code,
+  currency: u.currency, currency_code: u.currency_code,
+  role: u.role, status: u.status,
   email_verified: u.email_verified, kyc_status: u.kyc_status,
   referral_code: u.referral_code, referred_by: u.referred_by,
   balance: Number(u.balance || 0), pending_balance: Number(u.pending_balance || 0),
@@ -40,13 +44,25 @@ async function issueVerifyToken(user) {
 
 // ── Register ──────────────────────────────────────────────
 router.post('/register', wrap(async (req, res) => {
-  const { fullname, username, email, phone, country, password, ref_code } = req.body || {};
+  const { fullname, username, email, phone, country_code, password, ref_code } = req.body || {};
 
   if (!fullname || String(fullname).trim().length < 3) return res.status(400).json({ error: 'Full name is required' });
   if (!usernameValid(username || '')) return res.status(400).json({ error: 'Username must be 3–20 letters, numbers or underscore' });
   if (!emailValid(email || '')) return res.status(400).json({ error: 'Valid email required' });
-  if (!isValidKenyanPhone(phone)) return res.status(400).json({ error: 'Enter a valid Kenyan phone number (07XX or 2547XX…)' });
   if (!passwordStrong(password)) return res.status(400).json({ error: 'Password needs 8+ chars with letters and numbers' });
+
+  // Country is mandatory for new registrations and determines the account currency.
+  const geo = resolveUserCountry(country_code);
+  if (!geo) return res.status(400).json({ error: 'Select your country to continue' });
+  const keUser = isMpesaCountry(geo.country_code);
+  // Kenya: phone powers M-Pesa, so keep strict validation. Elsewhere: any
+  // reasonable international number (7-15 digits) is accepted.
+  if (keUser && !isValidKenyanPhone(phone)) {
+    return res.status(400).json({ error: 'Enter a valid Kenyan phone number (07XX or 2547XX…)' });
+  }
+  if (!keUser && !/^\+?[\d\s-]{7,15}$/.test(String(phone || ''))) {
+    return res.status(400).json({ error: 'Enter a valid phone number' });
+  }
 
   const uname = String(username).toLowerCase();
   const mail = String(email).toLowerCase().trim();
@@ -69,7 +85,10 @@ router.post('/register', wrap(async (req, res) => {
       username: uname,
       email: mail,
       phone: String(phone).trim(),
-      country: String(country || 'Kenya').slice(0, 60),
+      country: geo.country,
+      country_code: geo.country_code,
+      currency: geo.currency,
+      currency_code: geo.currency_code,
       password_hash,
       role: 'user',
       referral_code: referralCode(uname),
@@ -97,8 +116,8 @@ router.post('/register', wrap(async (req, res) => {
   }
 
   await notifications.create({
-    user_id: user.id, type: 'info', title: 'Welcome to TaskCash Kenya 🎉',
-    message: `You received a KES ${config.wallet.signupBonus} welcome bonus. Complete tasks to grow your balance — earnings come from tasks, referrals and sponsored activities, not investments.`,
+    user_id: user.id, type: 'info', title: 'Welcome to TaskCash 🎉',
+    message: `You received a ${formatMoney(config.wallet.signupBonus, user.currency_code)} welcome bonus. Complete tasks to grow your balance — earnings come from tasks, referrals and sponsored activities, not investments.`,
   });
 
   const verifyUrl = await issueVerifyToken(user);
@@ -165,7 +184,7 @@ router.get('/verify-email', wrap(async (req, res) => {
 
   await emailTokens.update(row.id, { used: true });
   await users.update(row.user_id, { email_verified: true });
-  res.json({ ok: true, message: 'Email verified. Karibu TaskCash! 🎉' });
+  res.json({ ok: true, message: 'Email verified. Welcome to TaskCash! 🎉' });
 }));
 
 router.post('/resend-verification', requireAuth, wrap(async (req, res) => {
@@ -230,10 +249,20 @@ router.put('/profile', requireAuth, wrap(async (req, res) => {
   const patch = {};
   if (req.body.fullname) patch.fullname = String(req.body.fullname).trim().slice(0, 120);
   if (req.body.phone) {
-    if (!isValidKenyanPhone(req.body.phone)) return res.status(400).json({ error: 'Invalid Kenyan phone number' });
+    // Validate against the account's country: Kenya keeps strict M-Pesa rules.
+    if (isMpesaCountry(user.country_code)) {
+      if (!isValidKenyanPhone(req.body.phone)) return res.status(400).json({ error: 'Invalid Kenyan phone number' });
+    } else if (!/^\+?[\d\s-]{7,15}$/.test(String(req.body.phone))) {
+      return res.status(400).json({ error: 'Invalid phone number' });
+    }
     patch.phone = String(req.body.phone).trim();
   }
-  if (req.body.country) patch.country = String(req.body.country).slice(0, 60);
+  // Country changes are admin-only once registered (prevents silent currency
+  // switching with an existing balance). Only cosmetic city/address free-text
+  // via `country` is NOT accepted here.
+  if (req.body.country_code && String(req.body.country_code).toUpperCase() !== String(user.country_code || '').toUpperCase()) {
+    return res.status(400).json({ error: 'Country cannot be changed here — contact support to move your account' });
+  }
   if (req.body.avatar !== undefined) patch.avatar = String(req.body.avatar || '').slice(0, 500000) || null;
   if (Object.keys(patch).length) await users.update(user.id, patch);
   res.json({ user: publicUser(await users.byId(user.id)) });

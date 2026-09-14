@@ -1,4 +1,4 @@
--- TaskCash Kenya — PostgreSQL schema (Supabase compatible)
+-- TaskCash — PostgreSQL schema (Supabase compatible)
 -- Idempotent: safe to run repeatedly.
 
 CREATE TABLE IF NOT EXISTS users (
@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS users (
   username        VARCHAR(40)  NOT NULL UNIQUE,
   email           VARCHAR(160) NOT NULL UNIQUE,
   phone           VARCHAR(20)  NOT NULL,
-  country         VARCHAR(60)  NOT NULL DEFAULT 'Kenya',
+  country         VARCHAR(60)  NOT NULL DEFAULT '',
+  country_code    VARCHAR(2),
+  currency        VARCHAR(10),
+  currency_code   VARCHAR(10),
   password_hash   VARCHAR(200) NOT NULL,
   role            VARCHAR(20)  NOT NULL DEFAULT 'user',   -- user | admin
   status          VARCHAR(20)  NOT NULL DEFAULT 'active', -- active | suspended
@@ -46,6 +49,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   description       TEXT NOT NULL,
   category          VARCHAR(40) NOT NULL,   -- video|social|survey|website|affiliate|app|referral|checkin
   reward            NUMERIC(10,2) NOT NULL,
+  availability_type VARCHAR(20) NOT NULL DEFAULT 'global', -- global|countries
+  countries         TEXT,                     -- JSON array of ISO2 codes, e.g. ["KE","UG"]
   time_required     VARCHAR(40),
   verification_type VARCHAR(30) NOT NULL,   -- code|screenshot|manual|auto
   url               TEXT,
@@ -58,6 +63,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Per-country configured rewards for a task. A reward is defined by
+-- (task, country, currency, amount) — never derived via exchange rates.
+CREATE TABLE IF NOT EXISTS task_rewards (
+  id            SERIAL PRIMARY KEY,
+  task_id       INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  country_code  VARCHAR(2) NOT NULL,
+  currency_code VARCHAR(10) NOT NULL,
+  reward_amount NUMERIC(12,2) NOT NULL,
+  UNIQUE (task_id, country_code)
+);
+
 CREATE TABLE IF NOT EXISTS task_completions (
   id          SERIAL PRIMARY KEY,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -65,6 +81,7 @@ CREATE TABLE IF NOT EXISTS task_completions (
   proof       TEXT,                    -- code or screenshot URL/data
   status      VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending|approved|rejected
   reward_paid NUMERIC(10,2) NOT NULL DEFAULT 0,
+  currency_code VARCHAR(10),           -- currency at the time of the transaction
   admin_note  TEXT,
   reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   reviewed_at TIMESTAMPTZ,
@@ -218,3 +235,14 @@ CREATE INDEX IF NOT EXISTS idx_referrals_referrer  ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_feed_created        ON earnings_feed(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tickets_user        ON support_tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_msgs_ticket  ON ticket_messages(ticket_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_rewards_task   ON task_rewards(task_id);
+
+-- Legacy deployments: add the newer columns if the tables already exist.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS country_code  VARCHAR(2);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS currency      VARCHAR(10);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS currency_code VARCHAR(10);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS availability_type VARCHAR(20) NOT NULL DEFAULT 'global';
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS countries TEXT;
+ALTER TABLE task_completions ADD COLUMN IF NOT EXISTS currency_code VARCHAR(10);
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS currency_code VARCHAR(10);
+ALTER TABLE deposits ADD COLUMN IF NOT EXISTS currency_code VARCHAR(10);

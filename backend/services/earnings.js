@@ -6,6 +6,7 @@
 const { Table } = require('../db');
 const config = require('../config');
 const { r2 } = require('../lib/helpers');
+const { formatMoney } = require('../lib/money');
 const ws = require('../lib/ws');
 
 const users = new Table('users');
@@ -20,18 +21,20 @@ async function notify(userId, title, message, type = 'success') {
   ws.sendToUser(userId, { type: 'notification', payload: n });
 }
 
-async function pushFeed(user, source, amount) {
+async function pushFeed(user, source, amount, currencyCode) {
+  const cur = String(currencyCode || user.currency_code || '').toUpperCase() || null;
   await feed.create({
     user_id: user.id,
     name: user.username ? `${user.username.slice(0, 3)}***` : 'user***',
     source,
     amount: r2(amount),
+    currency_code: cur,
   });
-  ws.broadcastAll({ type: 'feed', payload: { name: user.username ? `${user.username.slice(0, 3)}***` : 'user***', source, amount: r2(amount) } });
+  ws.broadcastAll({ type: 'feed', payload: { name: user.username ? `${user.username.slice(0, 3)}***` : 'user***', source, amount: r2(amount), currency_code: cur } });
 }
 
 /** Pay referral commissions up the chain (L1 direct, L2 team). */
-async function payReferralCommissions(worker, grossReward, source) {
+async function payReferralCommissions(worker, grossReward, source, currencyCode) {
   let payouts = { l1: 0, l2: 0 };
   const isActive = (u) => !u.status || u.status === 'active';
   const l1 = worker.referred_by ? await users.byId(worker.referred_by) : null;
@@ -43,7 +46,7 @@ async function payReferralCommissions(worker, grossReward, source) {
       await users.adjust(l1.id, 'referral_earnings', amt);
       const rel = await referrals.get({ referrer_id: l1.id, referred_user_id: worker.id });
       if (rel) await referrals.adjust(rel.id, 'commission', amt);
-      await notify(l1.id, 'Referral commission', `You earned KES ${amt.toFixed(2)} from ${worker.username}'s task.`, 'success');
+      await notify(l1.id, 'Referral commission', `You earned ${formatMoney(amt, currencyCode)} from ${worker.username}'s task.`, 'success');
       payouts.l1 = amt;
 
       const l2 = l1.referred_by ? await users.byId(l1.referred_by) : null;
@@ -55,7 +58,7 @@ async function payReferralCommissions(worker, grossReward, source) {
           await users.adjust(l2.id, 'referral_earnings', amt2);
           const rel2 = await referrals.get({ referrer_id: l2.id, referred_user_id: l1.id });
           if (rel2) await referrals.adjust(rel2.id, 'commission', amt2);
-          await notify(l2.id, 'Team commission', `You earned KES ${amt2.toFixed(2)} from your team's activity.`, 'success');
+          await notify(l2.id, 'Team commission', `You earned ${formatMoney(amt2, currencyCode)} from your team's activity.`, 'success');
           payouts.l2 = amt2;
         }
       }
@@ -76,16 +79,19 @@ async function approveCompletion(completion) {
   // Auto-verified tasks are created pre-approved (status='approved', reviewed_at=null).
   if (completion.reviewed_at) return { alreadyApproved: true };
 
-  const reward = r2(task.reward);
+  // Currency of record: the completion row captures the currency at the time
+  // of the transaction. It is never converted afterwards.
+  const currencyCode = String(completion.currency_code || (completion.user || user).currency_code || user.currency_code || 'KES').toUpperCase();
+  const reward = r2(completion.reward_paid || task.reward);
   await users.adjust(user.id, 'balance', reward);
   await users.adjust(user.id, 'total_earned', reward);
   await users.adjust(user.id, 'tasks_completed', 1);
   await completions.update(completion.id, { status: 'approved', reviewed_at: new Date().toISOString() });
 
-  await pushFeed(user, task.category, reward);
-  await notify(user.id, 'Task approved 🎉', `"${task.title}" approved — KES ${reward.toFixed(2)} added to your balance.`, 'success');
-  await payReferralCommissions(user, reward, task.category);
-  return { reward };
+  await pushFeed(user, task.category, reward, currencyCode);
+  await notify(user.id, 'Task approved 🎉', `"${task.title}" approved — ${formatMoney(reward, currencyCode)} added to your balance.`, 'success');
+  await payReferralCommissions(user, reward, task.category, currencyCode);
+  return { reward, currency_code: currencyCode };
 }
 
 async function rejectCompletion(completion, note) {

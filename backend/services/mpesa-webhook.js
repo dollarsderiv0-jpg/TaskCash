@@ -2,6 +2,7 @@
 const { Table } = require('../db');
 const config = require('../config');
 const { r2 } = require('../lib/helpers');
+const { formatMoney } = require('../lib/money');
 const ws = require('../lib/ws');
 
 const deposits = new Table('deposits');
@@ -34,7 +35,7 @@ async function processCallback(body) {
     await notifications.create({
       user_id: deposit.user_id, type: 'success',
       title: 'Deposit confirmed ✅',
-      message: `KES ${r2(deposit.amount).toFixed(2)} has been added to your balance. Receipt ${receipt}.`,
+      message: `${formatMoney(r2(deposit.amount), deposit.currency_code)} has been added to your balance. Receipt ${receipt}.`,
     });
     ws.broadcastAdmins({ type: 'admin_alert', payload: { kind: 'deposit', id: deposit.id, amount: deposit.amount } });
     return { status: 'approved' };

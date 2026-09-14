@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tasks — TaskCash Kenya</title>
+<title>Tasks — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -95,7 +95,7 @@ function render() {
     <div class="glass card task-card card-hover">
       <div class="task-top">
         <strong>${UI.esc(t.title)}</strong>
-        <span class="task-reward">${UI.kes0(t.reward)}</span>
+        <span class="task-reward">${UI.esc(t.reward_display || UI.money0(t.reward, t.currency_code))}</span>
       </div>
       <p class="muted small" style="margin:0">${UI.esc((t.description || '').slice(0, 110))}${(t.description || '').length > 110 ? '…' : ''}</p>
       <div class="chip-row">
@@ -137,7 +137,7 @@ function openTask(t) {
   const m = UI.modal(`
     <h3>${UI.esc(t.title)}</h3>
     <div class="chip-row" style="margin:10px 0">
-      <span class="badge">${UI.kes0(t.reward)} reward</span>
+      <span class="badge">${UI.esc(t.reward_display || UI.money0(t.reward, t.currency_code))} reward</span>
       <span class="chip">${UI.esc(t.time_required || '—')}</span>
       <span class="chip">${UI.esc(t.verification_type)} verification</span>
     </div>
@@ -177,7 +177,7 @@ function openVideoTask(t) {
   const m = UI.modal(`
     <h3>${UI.esc(t.title)}</h3>
     <div class="chip-row" style="margin:10px 0">
-      <span class="badge">${UI.kes0(t.reward)} reward</span>
+      <span class="badge">${UI.esc(t.reward_display || UI.money0(t.reward, t.currency_code))} reward</span>
       <span class="chip">${UI.esc(t.time_required)}s watch required</span>
     </div>
     <div class="video-frame"><iframe id="vid" width="100%" height="100%" src="${UI.esc(t.url || '')}" title="Sponsored video" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>

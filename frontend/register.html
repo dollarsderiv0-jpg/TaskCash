@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Create account — TaskCash Kenya</title>
+<title>Create account — TaskCash</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#39ff14">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -24,33 +24,33 @@
   <div class="container" style="max-width:520px">
     <div class="glass card fade-up">
       <h1 style="margin:0 0 4px;font-size:1.7rem">Create your account</h1>
-      <p class="muted small" style="margin-top:0">Free · KES 50 welcome bonus · takes 60 seconds</p>
+      <p class="muted small" style="margin-top:0">Free · welcome bonus · takes 60 seconds</p>
 
       <form id="form" style="margin-top:18px">
         <div class="field">
           <label for="fullname">Full name</label>
-          <input class="input" id="fullname" required minlength="3" placeholder="e.g. Grace Wanjiku" autocomplete="name">
+          <input class="input" id="fullname" required minlength="3" placeholder="Your full name" autocomplete="name">
         </div>
         <div class="field">
           <label for="username">Username</label>
-          <input class="input" id="username" required pattern="[A-Za-z0-9_]{3,20}" placeholder="e.g. wanjiku_g" autocomplete="username">
+          <input class="input" id="username" required pattern="[A-Za-z0-9_]{3,20}" placeholder="e.g. jane_doe" autocomplete="username">
           <div class="hint">3–20 letters, numbers or underscore</div>
+        </div>
+        <div class="field">
+          <label for="country">Country <span class="muted">(sets your account currency)</span></label>
+          <select class="input" id="country" required>
+            <option value="">Select your country…</option>
+          </select>
+          <div class="hint" id="country-hint">Available worldwide</div>
+        </div>
+        <div class="field">
+          <label for="phone">Phone number</label>
+          <input class="input" id="phone" required placeholder="+254 7XX XXX XXX" inputmode="tel" autocomplete="tel">
+          <div class="hint" id="phone-hint">Used for account verification & payouts</div>
         </div>
         <div class="field">
           <label for="email">Email</label>
           <input class="input" id="email" type="email" required placeholder="you@example.com" autocomplete="email">
-        </div>
-        <div class="field">
-          <label for="phone">M-Pesa phone number</label>
-          <input class="input" id="phone" required placeholder="07XX XXX XXX" inputmode="tel" autocomplete="tel">
-          <div class="hint">Used for deposits & withdrawals</div>
-        </div>
-        <div class="field">
-          <label for="country">Country</label>
-          <select class="input" id="country">
-            <option>Kenya</option><option>Uganda</option><option>Tanzania</option>
-            <option>Rwanda</option><option>Other</option>
-          </select>
         </div>
         <div class="field">
           <label for="password">Password</label>
@@ -76,9 +76,33 @@
 </section>
 
 <script src="/assets/js/api.js"></script>
+<script src="/assets/js/countries.js"></script>
 <script src="/assets/js/ui.js"></script>
 <script>
 UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+
+// ── Country picker: every country, no default selection ──
+const countrySel = UI.el('country');
+COUNTRIES.forEach((c) => {
+  const opt = document.createElement('option');
+  opt.value = c.code;
+  opt.textContent = `${c.name} (${c.code}) — ${c.currency_code}`;
+  countrySel.appendChild(opt);
+});
+
+// Kenya-specific helper text only for Kenyan users.
+function onCountryChange() {
+  const c = COUNTRY_BY_CODE[countrySel.value];
+  UI.el('country-hint').textContent = c ? `Currency: ${c.currency_code}` : 'Available worldwide';
+  if (countrySel.value === 'KE') {
+    UI.el('phone').placeholder = '07XX XXX XXX';
+    UI.el('phone-hint').textContent = 'M-Pesa number — used for deposits & payouts';
+  } else {
+    UI.el('phone').placeholder = '+<country code> XXX XXX XXX';
+    UI.el('phone-hint').textContent = 'Used for account verification & payouts';
+  }
+}
+countrySel.addEventListener('change', onCountryChange);
 
 // Capture ?ref=CODE from referral links
 const refParam = new URLSearchParams(location.search).get('ref');
@@ -86,6 +110,7 @@ if (refParam) UI.el('ref_code').value = refParam.toUpperCase();
 
 UI.el('form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!countrySel.value) { UI.toast('Select your country to continue', 'error'); return; }
   const btn = UI.el('submit');
   btn.disabled = true; btn.textContent = 'Creating account…';
   try {
@@ -94,12 +119,13 @@ UI.el('form').addEventListener('submit', async (e) => {
       username: UI.el('username').value.trim(),
       email: UI.el('email').value.trim(),
       phone: UI.el('phone').value.trim(),
-      country: UI.el('country').value,
+      country_code: countrySel.value,
       password: UI.el('password').value,
       ref_code: UI.el('ref_code').value.trim().toUpperCase() || undefined,
     });
     API.setSession(res);
-    UI.toast('Karibu TaskCash! 🎉 KES 50 bonus added');
+    localStorage.setItem('tc_currency', res.user.currency_code || '');
+    UI.toast('Welcome to TaskCash! 🎉 Bonus added');
     setTimeout(() => location.href = '/dashboard.html', 900);
   } catch (err) {
     UI.toast(err.message, 'error', 5000);

@@ -1,7 +1,7 @@
 {
-  "name": "taskcash-kenya",
-  "version": "1.0.0",
-  "description": "TaskCash Kenya — task rewards platform with M-Pesa deposits & withdrawals",
+  "name": "taskcash",
+  "version": "2.0.0",
+  "description": "TaskCash — global task rewards platform with country-specific rewards and payouts",
   "main": "backend/server.js",
   "type": "commonjs",
   "engines": {
@@ -11,6 +11,7 @@
     "start": "node backend/server.js",
     "dev": "node --watch backend/server.js",
     "seed": "node backend/db/seed.js",
+    "simulate": "node scripts/simulate.js",
     "check": "node scripts/syntax-check.js"
   },
   "dependencies": {
@@ -31,7 +32,7 @@
     "fintech",
     "rewards",
     "mpesa",
-    "kenya"
+    "global"
   ],
   "license": "MIT"
 }
