@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: taskcash-kenya
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run seed
+    startCommand: npm start
+    healthCheckPath: /api/feed
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false      # paste your Supabase/Postgres connection string
+      - key: DATABASE_SSL
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CSRF_SECRET
+        generateValue: true
+      - key: APP_URL
+        sync: false      # e.g. https://taskcash-kenya.onrender.com
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: MPESA_APP_KEY
+        sync: false
+      - key: MPESA_APP_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_CALLBACK_URL
+        sync: false

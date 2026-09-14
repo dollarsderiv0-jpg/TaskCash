@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TaskCash Kenya — Earn by completing tasks. Withdraw via M-Pesa.</title>
+<meta name="description" content="TaskCash Kenya rewards you for completing sponsored tasks, surveys, referrals and more. Deposit and withdraw with M-Pesa. Earnings from activities — never guaranteed investment returns.">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash<span class="badge" style="margin-left:6px">KE</span></a>
+    <div class="nav-links" id="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#packages">Packages</a>
+      <a href="#categories">Tasks</a>
+      <a href="#referrals">Referrals</a>
+      <a href="#faq">FAQ</a>
+      <a href="#contact">Contact</a>
+      <a href="/login.html">Login</a>
+      <a class="btn btn-primary btn-sm" href="/register.html">Get Started</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <button class="icon-btn nav-burger" aria-label="Menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── HERO ─────────────────────────────────────────── -->
+<header class="hero">
+  <div class="container hero-grid">
+    <div>
+      <span class="badge fade-up">🇰🇪 Built for Kenya · M-Pesa inside</span>
+      <h1 class="fade-up fade-up-1">Get paid for <span class="hl">every task</span> you complete</h1>
+      <p class="lead fade-up fade-up-2">
+        Watch sponsored videos, answer surveys, join campaigns and invite friends —
+        then cash out to M-Pesa. Earnings come from <strong>completed activities</strong>,
+        never from investments. No guaranteed returns — your effort determines your rewards.
+      </p>
+      <div class="hero-cta fade-up fade-up-3">
+        <a class="btn btn-primary pulse" href="/register.html">Start earning — free</a>
+        <a class="btn btn-ghost" href="#how">How it works</a>
+      </div>
+      <p class="small muted fade-up fade-up-4" style="margin-top:16px">
+        Free signup · KES 50 welcome bonus · Withdraw from KES 100
+      </p>
+    </div>
+
+    <div class="glass card hero-card fade-up fade-up-2">
+      <div class="chip-row" style="justify-content:space-between">
+        <strong>Live earnings feed</strong>
+        <span class="badge-gray badge">LIVE</span>
+      </div>
+      <div id="feed" style="margin-top:12px">
+        <div class="skeleton" style="height:34px;margin-bottom:8px"></div>
+        <div class="skeleton" style="height:34px;margin-bottom:8px"></div>
+        <div class="skeleton" style="height:34px"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="stat-grid" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div><div class="small muted">Tasks completed</div><div class="count-up" style="font-weight:800;font-size:1.3rem" data-count="128450">0</div></div>
+        <div><div class="small muted">Paid out</div><div class="count-up" style="font-weight:800;font-size:1.3rem" data-count="4821500">0</div></div>
+        <div><div class="small muted">Active earners</div><div class="count-up" style="font-weight:800;font-size:1.3rem" data-count="9240">0</div></div>
+        <div><div class="small muted">Avg. payout time</div><div style="font-weight:800;font-size:1.3rem">&lt; 24h</div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ── HOW IT WORKS ─────────────────────────────────── -->
+<section id="how">
+  <div class="container">
+    <h2 class="section-title">How it works</h2>
+    <p class="section-sub">Three steps between you and your first M-Pesa payout.</p>
+    <div class="grid-3">
+      <div class="glass card card-hover fade-up">
+        <div style="font-size:2rem">📝</div>
+        <h3>1. Create your account</h3>
+        <p class="muted">Register free with your phone number. Get a KES 50 welcome bonus instantly — no deposit required.</p>
+      </div>
+      <div class="glass card card-hover fade-up fade-up-1">
+        <div style="font-size:2rem">✅</div>
+        <h3>2. Complete verified tasks</h3>
+        <p class="muted">Pick from videos, surveys, app installs, social campaigns and more. Each task shows its reward and verification method up front.</p>
+      </div>
+      <div class="glass card card-hover fade-up fade-up-2">
+        <div style="font-size:2rem">💸</div>
+        <h3>3. Withdraw via M-Pesa</h3>
+        <p class="muted">Request a payout from KES 100. Admin-verified withdrawals land on your M-Pesa — usually within 24 hours.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── PACKAGES ─────────────────────────────────────── -->
+<section id="packages" style="background:var(--bg-soft)">
+  <div class="container">
+    <h2 class="section-title">Unlock more daily tasks</h2>
+    <p class="section-sub">
+      Packages raise your <strong>daily task limit</strong> — they are not investments and do not
+      generate returns by themselves. Earnings still come only from tasks you actually complete.
+    </p>
+    <div class="grid-4" id="pkg-grid">
+      <div class="glass card card-hover">
+        <h3>Free</h3>
+        <div style="font-size:1.9rem;font-weight:800">KES 0</div>
+        <p class="muted small">Every account starts here.</p>
+        <ul class="muted small" style="line-height:2;padding-left:18px">
+          <li>3 task submissions / day</li>
+          <li>All task categories*</li>
+          <li>Referral program</li>
+          <li>Daily check-in bonus</li>
+        </ul>
+        <a class="btn btn-ghost btn-block" href="/register.html">Start free</a>
+      </div>
+      <div class="glass card card-hover" style="border-color:var(--neon-border)">
+        <span class="badge">Most popular</span>
+        <h3 style="margin-top:8px">Silver</h3>
+        <div style="font-size:1.9rem;font-weight:800">KES 1,000</div>
+        <p class="muted small">30 days access</p>
+        <ul class="muted small" style="line-height:2;padding-left:18px">
+          <li>10 task submissions / day</li>
+          <li>Priority verification</li>
+          <li>All task categories</li>
+          <li>M-Pesa withdrawals</li>
+        </ul>
+        <a class="btn btn-primary btn-block" href="/register.html">Get Silver</a>
+      </div>
+      <div class="glass card card-hover">
+        <h3>Gold</h3>
+        <div style="font-size:1.9rem;font-weight:800">KES 2,500</div>
+        <p class="muted small">30 days access</p>
+        <ul class="muted small" style="line-height:2;padding-left:18px">
+          <li>18 task submissions / day</li>
+          <li>Video & app tasks</li>
+          <li>Priority support</li>
+          <li>M-Pesa withdrawals</li>
+        </ul>
+        <a class="btn btn-ghost btn-block" href="/register.html">Get Gold</a>
+      </div>
+      <div class="glass card card-hover">
+        <h3>Platinum</h3>
+        <div style="font-size:1.9rem;font-weight:800">KES 5,000</div>
+        <p class="muted small">30 days access</p>
+        <ul class="muted small" style="line-height:2;padding-left:18px">
+          <li>30 task submissions / day</li>
+          <li>Every task type</li>
+          <li>Fast-track withdrawals</li>
+          <li>1-on-1 support</li>
+        </ul>
+        <a class="btn btn-ghost btn-block" href="/register.html">Go Platinum</a>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:14px">
+      *Category availability can vary by campaign. Packages can be purchased with your in-app balance after an M-Pesa deposit.
+      This is a rewards platform — not an investment scheme.
+    </p>
+  </div>
+</section>
+
+<!-- ── TASK CATEGORIES ──────────────────────────────── -->
+<section id="categories">
+  <div class="container">
+    <h2 class="section-title">Task categories</h2>
+    <p class="section-sub">Every task lists its reward, time required and how it's verified — no surprises.</p>
+    <div class="grid-3">
+      <div class="glass card card-hover"><div style="font-size:1.6rem">🎬</div><h3>Sponsored videos</h3><p class="muted small">Watch advertiser videos with a countdown timer. Auto-verified on completion.</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">📣</div><h3>Social campaigns</h3><p class="muted small">Follow, like, share and post for sponsors. Verified by screenshot.</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">📊</div><h3>Surveys</h3><p class="muted small">Share opinions with research partners. Verified by completion code.</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">🌐</div><h3>Website visits</h3><p class="muted small">Explore sponsor sites. Verified by unique on-page code.</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">📲</div><h3>App downloads</h3><p class="muted small">Install and open sponsor apps. Code-verified on first launch.</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">🤝</div><h3>Affiliate offers</h3><p class="muted small">Sign up through partner links. Manually approved with the partner.</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">👥</div><h3>Referral tasks</h3><p class="muted small">Invite friends — earn when they complete their first task, plus 10% of their task earnings for life (they earn normally too).</p></div>
+      <div class="glass card card-hover"><div style="font-size:1.6rem">📅</div><h3>Daily check-ins</h3><p class="muted small">Show up daily. Streaks grow your bonus up to KES 25/day.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── REFERRALS ────────────────────────────────────── -->
+<section id="referrals" style="background:var(--bg-soft)">
+  <div class="container hero-grid">
+    <div>
+      <h2 class="section-title">Two-level referral program</h2>
+      <p class="section-sub">
+        Share your unique link. You earn <strong class="neon" style="color:var(--neon)">10%</strong> of your direct referrals'
+        task earnings and <strong style="color:var(--neon)">3%</strong> of their team's — paid from the platform's budget,
+        never deducted from your friends' rewards.
+      </p>
+      <ul class="muted" style="line-height:2.1">
+        <li>✅ Level 1 — direct referrals: 10% commission</li>
+        <li>✅ Level 2 — team referrals: 3% commission</li>
+        <li>✅ Live referral statistics and team dashboard</li>
+        <li>✅ Commissions credited instantly on task approval</li>
+      </ul>
+      <a class="btn btn-primary" href="/register.html">Claim my referral link</a>
+    </div>
+    <div class="glass card">
+      <h3 style="margin-top:0">Sample team dashboard</h3>
+      <div class="stat-grid" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div class="glass" style="padding:12px"><div class="small muted">Direct refs</div><div style="font-weight:800;font-size:1.4rem">27</div></div>
+        <div class="glass" style="padding:12px"><div class="small muted">Team refs</div><div style="font-weight:800;font-size:1.4rem">118</div></div>
+        <div class="glass" style="padding:12px"><div class="small muted">Referral earnings</div><div style="font-weight:800;font-size:1.4rem;color:var(--neon)">KES 12,480</div></div>
+        <div class="glass" style="padding:12px"><div class="small muted">This month</div><div style="font-weight:800;font-size:1.4rem">KES 3,210</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── TESTIMONIALS ─────────────────────────────────── -->
+<section>
+  <div class="container">
+    <h2 class="section-title">What earners say</h2>
+    <p class="section-sub">Real workflows — rewards depend on tasks completed.</p>
+    <div class="grid-3">
+      <div class="glass card fade-up">
+        <p>"I do surveys during my commute and cash out every Friday. The verification codes are quick."</p>
+        <div class="divider"></div>
+        <strong>Wanjiku, Nairobi</strong> <span class="muted small">· Student</span>
+      </div>
+      <div class="glass card fade-up fade-up-1">
+        <p>"Video tasks and the daily streak add up. Withdrawals hit my M-Pesa the same day."</p>
+        <div class="divider"></div>
+        <strong>Brian, Kisumu</strong> <span class="muted small">· Boda rider</span>
+      </div>
+      <div class="glass card fade-up fade-up-2">
+        <p>"The referral commissions are the real deal — my team of 30 keeps earning for me."</p>
+        <div class="divider"></div>
+        <strong>Achieng, Mombasa</strong> <span class="muted small">· Boutique owner</span>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:12px">Testimonials illustrate individual experiences, not typical or guaranteed results.</p>
+  </div>
+</section>
+
+<!-- ── FAQ ──────────────────────────────────────────── -->
+<section id="faq" style="background:var(--bg-soft)">
+  <div class="container" style="max-width:780px">
+    <h2 class="section-title">FAQ</h2>
+    <p class="section-sub">Straight answers before you start.</p>
+
+    <div class="glass card" style="margin-bottom:12px">
+      <strong>Is TaskCash an investment platform?</strong>
+      <p class="muted small">No. There are no investments and no guaranteed returns. You earn only by completing verified tasks, referring active friends, and joining sponsored campaigns. Packages simply unlock higher daily task limits.</p>
+    </div>
+    <div class="glass card" style="margin-bottom:12px">
+      <strong>How do deposits work?</strong>
+      <p class="muted small">Deposits use M-Pesa STK Push: enter your amount and phone, confirm on your handset, and your balance updates automatically once Safaricom confirms. Deposits fund package purchases; they are not investments.</p>
+    </div>
+    <div class="glass card" style="margin-bottom:12px">
+      <strong>When can I withdraw?</strong>
+      <p class="muted small">From KES 100 once your account is KYC-verified. Withdrawals go through a quick admin review (usually within 24h) to keep fraud out, then land on M-Pesa or your bank.</p>
+    </div>
+    <div class="glass card" style="margin-bottom:12px">
+      <strong>How are tasks verified?</strong>
+      <p class="muted small">Each task uses one of four methods: automatic verification (videos with watch-time checks), unique codes, screenshot uploads, or manual partner approval. Submissions failing verification are rejected with a reason.</p>
+    </div>
+    <div class="glass card" style="margin-bottom:12px">
+      <strong>What happens if I cheat?</strong>
+      <p class="muted small">Fake proofs, emulators, multiple accounts and bot activity are detected and rejected. Repeat abuse means suspension and forfeiture of pending rewards.</p>
+    </div>
+    <div class="glass card">
+      <strong>Does it cost anything to join?</strong>
+      <p class="muted small">No — registration is free and includes a KES 50 welcome bonus. Packages are optional upgrades for higher daily limits.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── CONTACT ──────────────────────────────────────── -->
+<section id="contact">
+  <div class="container grid-2">
+    <div>
+      <h2 class="section-title">Contact & support</h2>
+      <p class="section-sub">Questions before signing up? We reply within one business day.</p>
+      <ul style="line-height:2.2" class="muted">
+        <li>📧 support@taskcash.co.ke</li>
+        <li>💬 In-app live chat (fastest)</li>
+        <li>🎫 Support tickets from your dashboard</li>
+        <li>📍 Nairobi, Kenya</li>
+      </ul>
+    </div>
+    <div class="glass card">
+      <h3 style="margin-top:0">Business inquiries</h3>
+      <p class="muted small">Sponsors and advertisers: get your campaign in front of verified Kenyan earners with four-tier verification. Email partnerships@taskcash.co.ke.</p>
+      <a class="btn btn-ghost" href="mailto:partnerships@taskcash.co.ke">Become a sponsor</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="foot-grid">
+      <div>
+        <a class="logo" href="/"><span class="k">Task</span>Cash</a>
+        <p class="disclaimer" style="margin-top:10px">
+          <strong>Risk & earnings disclaimer:</strong> TaskCash Kenya is a rewards platform, not an investment scheme.
+          Earnings depend entirely on tasks completed, referrals and eligible sponsored activities, and are not guaranteed.
+          Package fees purchase access to higher daily task limits and are non-refundable once consumed.
+          Withdrawals require account verification and pass anti-fraud review. Availability of tasks varies daily.
+        </p>
+      </div>
+      <div class="small muted">
+        <div><a href="/login.html">Login</a></div>
+        <div><a href="/register.html">Register</a></div>
+        <div><a href="/tasks.html">Tasks</a></div>
+        <div><a href="/extras.html">Extras</a></div>
+      </div>
+      <div class="small muted">
+        <div><a href="#how">How it works</a></div>
+        <div><a href="#faq">FAQ</a></div>
+        <div><a href="#contact">Contact</a></div>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:26px">© 2026 TaskCash Kenya. All rights reserved.</p>
+  </div>
+</footer>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+// Theme toggle initial state
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+
+// Animated counters
+document.querySelectorAll('[data-count]').forEach((el) => {
+  const target = Number(el.dataset.count);
+  const isMoney = target > 100000;
+  UI.countUp(el, target, { prefix: isMoney ? 'KES ' : '', decimals: isMoney ? 0 : 0, duration: 1600 });
+});
+
+// Load live feed
+async function loadFeed() {
+  try {
+    const { feed } = await API.get('/api/feed');
+    const host = UI.el('feed');
+    if (!host) return;
+    if (!feed.length) {
+      host.innerHTML = '<p class="muted small">Be the first to complete a task today!</p>';
+      return;
+    }
+    host.innerHTML = feed.map((f) => `
+      <div class="feed-item">
+        <span><strong>${UI.esc(f.name)}</strong> ${UI.esc(f.source || 'task')} · <span class="muted">${UI.timeAgo(f.created_at)}</span></span>
+        <span style="color:var(--neon);font-weight:700">+${UI.kes(f.amount)}</span>
+      </div>`).join('');
+  } catch { /* silent */ }
+}
+loadFeed();
+setInterval(loadFeed, 30000);
+UI.connectSocket();
+document.addEventListener('tc:feed', loadFeed);
+</script>
+</body>
+</html>

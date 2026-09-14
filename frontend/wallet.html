@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet — TaskCash Kenya</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash</a>
+    <div class="nav-links" id="nav-links">
+      <a href="/dashboard.html">Dashboard</a>
+      <a href="/tasks.html">Tasks</a>
+      <a href="/wallet.html">Wallet</a>
+      <a href="/referrals.html">Referrals</a>
+      <a href="/leaderboard.html">Leaderboard</a>
+      <a href="/extras.html">Extras</a>
+      <a href="/settings.html">Settings</a>
+      <a href="#" id="logout">Logout</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <button class="icon-btn nav-burger" aria-label="Menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<section style="padding:34px 0">
+  <div class="container">
+    <h1 style="margin:0 0 18px;font-size:1.6rem">Wallet</h1>
+
+    <div class="stat-grid" style="margin-bottom:26px">
+      <div class="glass stat fade-up"><div class="icon">💰</div><div class="label">Available</div><div class="value" id="w-available">—</div></div>
+      <div class="glass stat fade-up fade-up-1"><div class="icon">⏳</div><div class="label">On hold / pending</div><div class="value" id="w-pending">—</div></div>
+      <div class="glass stat fade-up fade-up-2"><div class="icon">📈</div><div class="label">Total earned</div><div class="value" id="w-total">—</div></div>
+    </div>
+
+    <div class="grid-2">
+      <!-- Deposit -->
+      <div class="glass card">
+        <h3 style="margin-top:0">📲 Deposit via M-Pesa</h3>
+        <p class="muted small" style="margin-top:-6px">STK Push — confirm on your phone. Min KES 50.</p>
+        <div class="field">
+          <label for="dep-amount">Amount (KES)</label>
+          <input class="input" id="dep-amount" type="number" min="50" value="500" inputmode="numeric">
+        </div>
+        <div class="chip-row" style="margin-bottom:14px">
+          <button class="pill-tab" data-amt="100">100</button>
+          <button class="pill-tab" data-amt="500">500</button>
+          <button class="pill-tab" data-amt="1000">1,000</button>
+          <button class="pill-tab" data-amt="2500">2,500</button>
+          <button class="pill-tab" data-amt="5000">5,000</button>
+        </div>
+        <div class="field">
+          <label for="dep-phone">M-Pesa phone</label>
+          <input class="input" id="dep-phone" placeholder="07XX XXX XXX" inputmode="tel">
+        </div>
+        <button class="btn btn-primary btn-block" id="dep-btn">Initiate STK Push</button>
+        <div id="dep-status" style="margin-top:12px"></div>
+
+        <div class="divider"></div>
+        <strong class="small">Packages — unlock more daily tasks</strong>
+        <div id="pkg-list" style="margin-top:10px"><p class="muted small">Loading…</p></div>
+      </div>
+
+      <!-- Withdraw -->
+      <div class="glass card">
+        <h3 style="margin-top:0">💸 Withdraw</h3>
+        <p class="muted small" style="margin-top:-6px">Min KES 100 · 2% fee · admin review ≤ 24h. Requires account verification.</p>
+        <div class="field">
+          <label for="wd-amount">Amount (KES)</label>
+          <input class="input" id="wd-amount" type="number" min="100" inputmode="numeric" placeholder="e.g. 500">
+        </div>
+        <div class="field">
+          <label for="wd-method">Method</label>
+          <select class="input" id="wd-method">
+            <option value="mpesa">M-Pesa</option>
+            <option value="bank">Bank transfer</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="wd-dest" id="wd-dest-label">M-Pesa number</label>
+          <input class="input" id="wd-dest" placeholder="07XX XXX XXX">
+        </div>
+        <div class="glass" style="padding:12px;margin-bottom:14px" id="wd-summary">
+          <div style="display:flex;justify-content:space-between" class="small"><span class="muted">Fee (2%)</span><span id="wd-fee">KES 0.00</span></div>
+          <div style="display:flex;justify-content:space-between" class="small" style="margin-top:4px"><span class="muted">You receive</span><strong id="wd-net" style="color:var(--neon)">KES 0.00</strong></div>
+        </div>
+        <button class="btn btn-primary btn-block" id="wd-btn">Request withdrawal</button>
+
+        <div class="divider"></div>
+        <strong class="small">🎁 Promo code</strong>
+        <div class="copy-row" style="margin-top:8px">
+          <input class="input" id="promo" placeholder="e.g. KARIBU" style="text-transform:uppercase">
+          <button class="btn btn-ghost btn-sm" id="promo-btn">Redeem</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="glass card" style="margin-top:22px">
+      <div class="pill-tabs" id="hist-tabs">
+        <button class="pill-tab active" data-t="deposits">Deposits</button>
+        <button class="pill-tab" data-t="withdrawals">Withdrawals</button>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl" id="hist-table">
+          <thead><tr><th>Date</th><th>Detail</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p class="disclaimer">Deposits fund package purchases and are not investments. Withdrawals pass anti-fraud review; suspicious activity may be held or reversed. Fees and limits are shown before you confirm.</p>
+  </div>
+</footer>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+const me = UI.requireLogin();
+
+UI.el('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await API.post('/api/auth/logout').catch(() => {});
+  API.clearSession(); location.href = '/login.html';
+});
+UI.el('wd-dest').value = me.phone || '';
+
+// Balances
+async function loadBalances() {
+  try {
+    const { user } = await API.get('/api/auth/me');
+    UI.el('w-available').textContent = UI.kes(user.balance);
+    UI.el('w-pending').textContent = UI.kes(user.pending_balance);
+    UI.el('w-total').textContent = UI.kes(user.total_earned);
+  } catch (e) { UI.toast(e.message, 'error'); }
+}
+loadBalances();
+
+// Quick amounts
+document.querySelectorAll('[data-amt]').forEach((b) => {
+  b.onclick = () => { UI.el('dep-amount').value = b.dataset.amt; };
+});
+
+// ── Deposit flow ──
+UI.el('dep-btn').onclick = async () => {
+  const btn = UI.el('dep-btn');
+  btn.disabled = true; btn.textContent = 'Sending STK push…';
+  UI.el('dep-status').innerHTML = '';
+  try {
+    const res = await API.post('/api/wallet/deposit', {
+      amount: Number(UI.el('dep-amount').value),
+      phone: UI.el('dep-phone').value.trim(),
+    });
+    UI.el('dep-status').innerHTML = `<div class="glass" style="padding:12px"><strong class="small">${res.demo ? '🧪 Demo mode' : '📲 Check your phone'}</strong><p class="small muted" style="margin:6px 0 0">${UI.esc(res.message)}</p></div>`;
+    UI.toast(res.message, 'info', 6000);
+
+    if (res.deposit_id) pollDeposit(res.deposit_id);
+  } catch (e) {
+    UI.toast(e.message, 'error', 5000);
+  }
+  btn.disabled = false; btn.textContent = 'Initiate STK Push';
+};
+
+let pollTimer = null;
+function pollDeposit(id) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const { deposit } = await API.get(`/api/wallet/deposit/${id}`);
+      if (deposit.status !== 'pending') {
+        clearInterval(pollTimer);
+        if (deposit.status === 'approved') {
+          UI.toast(`Deposit confirmed — ${UI.kes(deposit.amount)} added! 🎉`, 'success', 6000);
+          UI.el('dep-status').innerHTML = `<div class="badge">✅ Deposit confirmed ${UI.kes(deposit.amount)}</div>`;
+        } else {
+          UI.toast('Deposit did not complete', 'error');
+        }
+        loadBalances(); loadHistory();
+      }
+    } catch { /* keep polling */ }
+  }, 4000);
+}
+
+// ── Withdrawal flow ──
+function updWdSummary() {
+  const amt = Number(UI.el('wd-amount').value || 0);
+  const fee = Math.round(amt * 2) / 100;
+  UI.el('wd-fee').textContent = UI.kes(fee);
+  UI.el('wd-net').textContent = UI.kes(Math.max(amt - fee, 0));
+}
+UI.el('wd-amount').addEventListener('input', updWdSummary);
+
+UI.el('wd-method').onchange = () => {
+  const bank = UI.el('wd-method').value === 'bank';
+  UI.el('wd-dest-label').textContent = bank ? 'Bank account number' : 'M-Pesa number';
+  UI.el('wd-dest').placeholder = bank ? 'e.g. 1234567890' : '07XX XXX XXX';
+};
+
+UI.el('wd-btn').onclick = async () => {
+  const btn = UI.el('wd-btn');
+  btn.disabled = true; btn.textContent = 'Requesting…';
+  try {
+    const res = await API.post('/api/wallet/withdraw', {
+      amount: Number(UI.el('wd-amount').value),
+      method: UI.el('wd-method').value,
+      destination: UI.el('wd-dest').value.trim(),
+    });
+    UI.toast(res.message, 'success', 6000);
+    UI.el('wd-amount').value = ''; updWdSummary();
+    loadBalances(); loadHistory();
+  } catch (e) { UI.toast(e.message, 'error', 6000); }
+  btn.disabled = false; btn.textContent = 'Request withdrawal';
+};
+
+// Promo redeem
+UI.el('promo-btn').onclick = async () => {
+  try {
+    const res = await API.post('/api/wallet/promo/redeem', { code: UI.el('promo').value.trim() });
+    UI.toast(res.message, 'success', 6000);
+    loadBalances();
+  } catch (e) { UI.toast(e.message, 'error'); }
+};
+
+// Packages
+async function loadPackages() {
+  try {
+    const { packages } = await API.get('/api/wallet/packages');
+    UI.el('pkg-list').innerHTML = packages.map((p) => `
+      <div class="feed-item" style="align-items:center">
+        <span><strong>${UI.esc(p.name)}</strong> · ${p.daily_tasks}/day<br><span class="muted small">${UI.esc((p.benefits || '').slice(0, 60))}</span></span>
+        <button class="btn btn-primary btn-sm" data-buy="${p.id}">${UI.kes0(p.price)}</button>
+      </div>`).join('');
+    UI.el('pkg-list').querySelectorAll('[data-buy]').forEach((b) => {
+      b.onclick = async () => {
+        if (!(await UI.confirm('Purchase this package with your balance?'))) return;
+        try {
+          const res = await API.post(`/api/wallet/packages/${b.dataset.buy}/purchase`);
+          UI.toast(res.message, 'success', 6000);
+          loadBalances();
+        } catch (e) { UI.toast(e.message, 'error', 6000); }
+      };
+    });
+  } catch { UI.el('pkg-list').innerHTML = '<p class="muted small">—</p>'; }
+}
+loadPackages();
+
+// History
+let histType = 'deposits';
+async function loadHistory() {
+  const tbody = UI.el('hist-table').querySelector('tbody');
+  try {
+    const rows = histType === 'deposits' ? (await API.get('/api/wallet/deposits')).deposits : (await API.get('/api/wallet/withdrawals')).withdrawals;
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="muted">Nothing yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map((r) => {
+      const badge = r.status === 'approved' ? '<span class="badge">approved</span>'
+        : r.status === 'pending' ? '<span class="badge badge-warn">pending</span>'
+        : '<span class="badge badge-danger">rejected</span>';
+      const detail = histType === 'deposits'
+        ? `M-Pesa ${UI.esc(r.phone || '')} ${r.reference ? '· ' + UI.esc(r.reference) : ''}`
+        : `${r.method === 'mpesa' ? 'M-Pesa' : 'Bank'} ${UI.esc(r.destination)} ${r.reference ? '· ' + UI.esc(r.reference) : ''}`;
+      return `<tr><td>${new Date(r.created_at).toLocaleDateString('en-KE')}</td><td>${detail}</td>
+        <td style="font-weight:700">${UI.kes(r.amount)}</td><td>${badge}</td></tr>`;
+    }).join('');
+  } catch (e) { tbody.innerHTML = `<tr><td colspan="4" class="muted">${UI.esc(e.message)}</td></tr>`; }
+}
+document.querySelectorAll('#hist-tabs .pill-tab').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('#hist-tabs .pill-tab').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    histType = b.dataset.t;
+    loadHistory();
+  };
+});
+loadHistory();
+</script>
+</body>
+</html>

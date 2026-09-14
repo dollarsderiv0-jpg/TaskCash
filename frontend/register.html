@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create account — TaskCash Kenya</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash</a>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <a class="btn btn-ghost btn-sm" href="/login.html">Login</a>
+    </div>
+  </div>
+</nav>
+
+<section style="padding:40px 0 64px">
+  <div class="container" style="max-width:520px">
+    <div class="glass card fade-up">
+      <h1 style="margin:0 0 4px;font-size:1.7rem">Create your account</h1>
+      <p class="muted small" style="margin-top:0">Free · KES 50 welcome bonus · takes 60 seconds</p>
+
+      <form id="form" style="margin-top:18px">
+        <div class="field">
+          <label for="fullname">Full name</label>
+          <input class="input" id="fullname" required minlength="3" placeholder="e.g. Grace Wanjiku" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="username">Username</label>
+          <input class="input" id="username" required pattern="[A-Za-z0-9_]{3,20}" placeholder="e.g. wanjiku_g" autocomplete="username">
+          <div class="hint">3–20 letters, numbers or underscore</div>
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input class="input" id="email" type="email" required placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="phone">M-Pesa phone number</label>
+          <input class="input" id="phone" required placeholder="07XX XXX XXX" inputmode="tel" autocomplete="tel">
+          <div class="hint">Used for deposits & withdrawals</div>
+        </div>
+        <div class="field">
+          <label for="country">Country</label>
+          <select class="input" id="country">
+            <option>Kenya</option><option>Uganda</option><option>Tanzania</option>
+            <option>Rwanda</option><option>Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input class="input" id="password" type="password" required minlength="8" placeholder="8+ characters, letters & numbers" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="ref_code">Referral code <span class="muted">(optional)</span></label>
+          <input class="input" id="ref_code" placeholder="e.g. GR1A2B3C4D" style="text-transform:uppercase">
+        </div>
+
+        <label class="small muted" style="display:flex;gap:8px;align-items:flex-start;margin:14px 0">
+          <input type="checkbox" id="terms" required style="margin-top:3px">
+          <span>I understand TaskCash is a <strong>rewards platform — not an investment</strong>. Earnings depend on tasks I complete and are not guaranteed.</span>
+        </label>
+
+        <button class="btn btn-primary btn-block" id="submit" type="submit">Create account</button>
+        <p class="center small muted" style="margin-top:14px">
+          Already have an account? <a href="/login.html">Log in</a>
+        </p>
+      </form>
+    </div>
+  </div>
+</section>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+
+// Capture ?ref=CODE from referral links
+const refParam = new URLSearchParams(location.search).get('ref');
+if (refParam) UI.el('ref_code').value = refParam.toUpperCase();
+
+UI.el('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = UI.el('submit');
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  try {
+    const res = await API.post('/api/auth/register', {
+      fullname: UI.el('fullname').value.trim(),
+      username: UI.el('username').value.trim(),
+      email: UI.el('email').value.trim(),
+      phone: UI.el('phone').value.trim(),
+      country: UI.el('country').value,
+      password: UI.el('password').value,
+      ref_code: UI.el('ref_code').value.trim().toUpperCase() || undefined,
+    });
+    API.setSession(res);
+    UI.toast('Karibu TaskCash! 🎉 KES 50 bonus added');
+    setTimeout(() => location.href = '/dashboard.html', 900);
+  } catch (err) {
+    UI.toast(err.message, 'error', 5000);
+    btn.disabled = false; btn.textContent = 'Create account';
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings — TaskCash Kenya</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash</a>
+    <div class="nav-links" id="nav-links">
+      <a href="/dashboard.html">Dashboard</a>
+      <a href="/tasks.html">Tasks</a>
+      <a href="/wallet.html">Wallet</a>
+      <a href="/referrals.html">Referrals</a>
+      <a href="/leaderboard.html">Leaderboard</a>
+      <a href="/extras.html">Extras</a>
+      <a href="/settings.html">Settings</a>
+      <a href="#" id="logout">Logout</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <button class="icon-btn nav-burger" aria-label="Menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<section style="padding:34px 0">
+  <div class="container">
+    <h1 style="margin:0 0 22px;font-size:1.6rem">Settings</h1>
+
+    <div class="grid-2">
+      <!-- Profile -->
+      <div class="glass card">
+        <h3 style="margin-top:0">👤 Profile</h3>
+        <div class="field">
+          <label for="p-fullname">Full name</label>
+          <input class="input" id="p-fullname">
+        </div>
+        <div class="field">
+          <label for="p-phone">Phone (M-Pesa)</label>
+          <input class="input" id="p-phone">
+        </div>
+        <div class="field">
+          <label for="p-country">Country</label>
+          <input class="input" id="p-country">
+        </div>
+        <div class="field">
+          <label for="p-avatar">Avatar (optional)</label>
+          <input type="file" class="input" id="p-avatar" accept="image/*">
+          <div class="hint" id="p-avatar-hint">PNG/JPG up to ~1MB</div>
+        </div>
+        <button class="btn btn-primary" id="p-save">Save profile</button>
+      </div>
+
+      <!-- Security -->
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="glass card">
+          <h3 style="margin-top:0">🔒 Change password</h3>
+          <div class="field">
+            <label for="cur-pass">Current password</label>
+            <input class="input" id="cur-pass" type="password" autocomplete="current-password">
+          </div>
+          <div class="field">
+            <label for="new-pass">New password</label>
+            <input class="input" id="new-pass" type="password" autocomplete="new-password">
+          </div>
+          <button class="btn btn-primary" id="pass-save">Update password</button>
+        </div>
+
+        <div class="glass card">
+          <h3 style="margin-top:0">✉️ Email verification</h3>
+          <p class="muted small" id="email-state">Checking…</p>
+          <button class="btn btn-ghost btn-sm" id="resend-btn">Resend verification email</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- KYC -->
+    <div class="glass card" style="margin-top:18px">
+      <h3 style="margin-top:0">🪪 Account verification (KYC)</h3>
+      <p class="muted small" style="margin-top:-6px">Required before withdrawals. Upload your ID (front & back) and a quick selfie. Review usually takes under 24h. Files stay confidential and are used only for verification.</p>
+      <div class="grid-3">
+        <div class="field"><label>ID front</label><input type="file" class="input" id="kyc-front" accept="image/*"></div>
+        <div class="field"><label>ID back</label><input type="file" class="input" id="kyc-back" accept="image/*"></div>
+        <div class="field"><label>Selfie</label><input type="file" class="input" id="kyc-selfie" accept="image/*"></div>
+      </div>
+      <button class="btn btn-primary" id="kyc-btn">Submit for verification</button>
+      <span class="badge" id="kyc-status" style="margin-left:10px">—</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p class="disclaimer">Keep your password private. TaskCash staff will never ask for it. KYC documents are handled confidentially for fraud prevention and regulatory compliance.</p>
+  </div>
+</footer>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+const me = UI.requireLogin();
+UI.el('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await API.post('/api/auth/logout').catch(() => {});
+  API.clearSession(); location.href = '/login.html';
+});
+
+const fileToDataUrl = (input) => new Promise((resolve) => {
+  const f = input.files && input.files[0];
+  if (!f) return resolve('');
+  if (f.size > 1_000_000) { UI.toast(`${f.name} is over ~1MB — choose a smaller image`, 'error'); return resolve(''); }
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.readAsDataURL(f);
+});
+
+// Load profile
+(async () => {
+  try {
+    const { user } = await API.get('/api/auth/me');
+    UI.el('p-fullname').value = user.fullname || '';
+    UI.el('p-phone').value = user.phone || '';
+    UI.el('p-country').value = user.country || 'Kenya';
+    UI.el('email-state').innerHTML = user.email_verified
+      ? '<span class="badge">✅ Email verified</span>'
+      : `<span class="badge badge-warn">Not verified</span> <span class="muted small">(${UI.esc(user.email)})</span>`;
+    const kstat = UI.el('kyc-status');
+    kstat.textContent = user.kyc_status;
+    kstat.className = user.kyc_status === 'verified' ? 'badge' : user.kyc_status === 'pending' ? 'badge badge-warn' : 'badge badge-gray';
+  } catch (e) { UI.toast(e.message, 'error'); }
+})();
+
+UI.el('p-save').onclick = async () => {
+  const avatar = await fileToDataUrl(UI.el('p-avatar'));
+  try {
+    await API.put('/api/auth/profile', {
+      fullname: UI.el('p-fullname').value.trim(),
+      phone: UI.el('p-phone').value.trim(),
+      country: UI.el('p-country').value.trim(),
+      ...(avatar ? { avatar } : {}),
+    });
+    UI.toast('Profile saved');
+  } catch (e) { UI.toast(e.message, 'error', 5000); }
+};
+
+UI.el('pass-save').onclick = async () => {
+  try {
+    await API.post('/api/auth/change-password', {
+      current: UI.el('cur-pass').value,
+      next: UI.el('new-pass').value,
+    });
+    UI.toast('Password updated');
+    UI.el('cur-pass').value = ''; UI.el('new-pass').value = '';
+  } catch (e) { UI.toast(e.message, 'error', 5000); }
+};
+
+UI.el('resend-btn').onclick = async () => {
+  try {
+    const res = await API.post('/api/auth/resend-verification');
+    UI.toast(res.message || 'Verification email sent', 'info');
+  } catch (e) { UI.toast(e.message, 'error'); }
+};
+
+UI.el('kyc-btn').onclick = async () => {
+  const [front, back, selfie] = await Promise.all([
+    fileToDataUrl(UI.el('kyc-front')),
+    fileToDataUrl(UI.el('kyc-back')),
+    fileToDataUrl(UI.el('kyc-selfie')),
+  ]);
+  try {
+    const res = await API.post('/api/auth/kyc', { id_front: front, id_back: back, selfie });
+    UI.toast(res.message, 'success', 6000);
+    UI.el('kyc-status').textContent = 'pending';
+    UI.el('kyc-status').className = 'badge badge-warn';
+  } catch (e) { UI.toast(e.message, 'error', 5000); }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Extras — TaskCash Kenya</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash</a>
+    <div class="nav-links" id="nav-links">
+      <a href="/dashboard.html">Dashboard</a>
+      <a href="/tasks.html">Tasks</a>
+      <a href="/wallet.html">Wallet</a>
+      <a href="/referrals.html">Referrals</a>
+      <a href="/leaderboard.html">Leaderboard</a>
+      <a href="/extras.html">Extras</a>
+      <a href="/settings.html">Settings</a>
+      <a href="#" id="logout">Logout</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" id="notif-btn" aria-label="Notifications">🔔</button>
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <button class="icon-btn nav-burger" aria-label="Menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<div class="drawer" id="notif-drawer">
+  <div class="drawer-head">
+    <strong>Notifications</strong>
+    <button class="icon-btn" id="notif-close">✕</button>
+  </div>
+  <div class="drawer-body" id="notif-list"><p class="muted small">Loading…</p></div>
+</div>
+
+<section style="padding:34px 0">
+  <div class="container">
+    <h1 style="margin:0 0 22px;font-size:1.6rem">Extras</h1>
+
+    <div class="grid-2">
+      <!-- Achievements -->
+      <div class="glass card">
+        <h3 style="margin-top:0">🏅 Achievements</h3>
+        <p class="muted small" style="margin-top:-6px">Badges unlock automatically as you hit milestones.</p>
+        <div class="grid-4" id="badges">
+          <div class="glass card center" style="padding:14px"><div style="font-size:1.6rem">🌱</div><strong class="small">First Task</strong><p class="muted small" style="margin:4px 0 0">Complete 1 task</p></div>
+          <div class="glass card center" style="padding:14px"><div style="font-size:1.6rem">🔥</div><strong class="small">Streak x7</strong><p class="muted small" style="margin:4px 0 0">7-day check-in streak</p></div>
+          <div class="glass card center" style="padding:14px"><div style="font-size:1.6rem">🤝</div><strong class="small">Recruiter</strong><p class="muted small" style="margin:4px 0 0">3 direct referrals</p></div>
+          <div class="glass card center" style="padding:14px"><div style="font-size:1.6rem">💎</div><strong class="small">High Earner</strong><p class="muted small" style="margin:4px 0 0">KES 5,000+ earned</p></div>
+        </div>
+        <div class="divider"></div>
+        <strong class="small">Your badges</strong>
+        <div id="my-badges" style="margin-top:8px"><p class="muted small">Loading…</p></div>
+      </div>
+
+      <!-- Promo + support -->
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="glass card">
+          <h3 style="margin-top:0">🎁 Promo codes</h3>
+          <div class="copy-row">
+            <input class="input" id="promo" placeholder="Enter code e.g. KARIBU" style="text-transform:uppercase">
+            <button class="btn btn-primary btn-sm" id="promo-btn">Redeem</button>
+          </div>
+        </div>
+
+        <div class="glass card">
+          <h3 style="margin-top:0">🎫 Support tickets</h3>
+          <div class="field">
+            <input class="input" id="tk-subject" placeholder="Subject">
+          </div>
+          <div class="field">
+            <textarea class="input" id="tk-message" placeholder="Describe the issue…"></textarea>
+          </div>
+          <button class="btn btn-primary btn-sm" id="tk-btn">Open ticket</button>
+          <div id="tk-list" style="margin-top:14px"><p class="muted small">Loading…</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live chat -->
+    <div class="glass card" style="margin-top:18px">
+      <div class="chip-row" style="justify-content:space-between">
+        <h3 style="margin:0">💬 Live chat</h3>
+        <span class="badge-gray badge" id="chat-count">—</span>
+      </div>
+      <div id="chat-box" style="max-height:300px;overflow-y:auto;margin:14px 0">
+        <p class="muted small">Loading…</p>
+      </div>
+      <div class="copy-row">
+        <input class="input" id="chat-input" placeholder="Say something… (be kind, no sharing of personal payment details)" maxlength="500">
+        <button class="btn btn-primary btn-sm" id="chat-send">Send</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+const me = UI.requireLogin();
+UI.connectSocket();
+
+document.getElementById('notif-btn').onclick = () => UI.el('notif-drawer').classList.toggle('open');
+UI.el('notif-close').onclick = () => UI.el('notif-drawer').classList.remove('open');
+(async () => {
+  const { notifications } = await API.get('/api/notifications');
+  UI.el('notif-list').innerHTML = notifications.length ? notifications.map((n) => `
+    <div class="notif"><div class="n-title">${UI.esc(n.title)}</div><div class="n-msg">${UI.esc(n.message)} · ${UI.timeAgo(n.created_at)}</div></div>`).join('')
+    : '<p class="muted small">No notifications.</p>';
+})();
+
+UI.el('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await API.post('/api/auth/logout').catch(() => {});
+  API.clearSession(); location.href = '/login.html';
+});
+
+// Badges
+(async () => {
+  try {
+    const { stats } = await API.get('/api/stats');
+    const all = stats.badges || [];
+    UI.el('my-badges').innerHTML = all.length
+      ? all.map((b) => `<span class="badge" style="margin:2px">${UI.esc(b)}</span>`).join(' ')
+      : '<span class="muted small">None yet — complete tasks to unlock.</span>';
+  } catch { UI.el('my-badges').innerHTML = '<p class="muted small">—</p>'; }
+})();
+
+// Promo
+UI.el('promo-btn').onclick = async () => {
+  try {
+    const res = await API.post('/api/wallet/promo/redeem', { code: UI.el('promo').value.trim() });
+    UI.toast(res.message, 'success', 6000);
+  } catch (e) { UI.toast(e.message, 'error'); }
+};
+
+// Tickets
+async function loadTickets() {
+  try {
+    const { tickets } = await API.get('/api/notifications/tickets');
+    UI.el('tk-list').innerHTML = tickets.length ? tickets.map((t) => `
+      <div class="feed-item" style="cursor:pointer" data-tk="${t.id}">
+        <span><strong>${UI.esc(t.subject)}</strong><br><span class="muted small">${UI.timeAgo(t.updated_at)}</span></span>
+        ${t.status === 'open' ? '<span class="badge badge-warn">open</span>' : t.status === 'answered' ? '<span class="badge">answered</span>' : '<span class="badge badge-gray">closed</span>'}
+      </div>`).join('') : '<p class="muted small">No tickets yet.</p>';
+    UI.el('tk-list').querySelectorAll('[data-tk]').forEach((el) => {
+      el.onclick = () => openTicket(el.dataset.tk);
+    });
+  } catch { /* ignore */ }
+}
+async function openTicket(id) {
+  try {
+    const { ticket, messages } = await API.get(`/api/notifications/tickets/${id}`);
+    const m = UI.modal(`
+      <h3>${UI.esc(ticket.subject)}</h3>
+      <p class="muted small">Status: ${UI.esc(ticket.status)}</p>
+      <div style="max-height:300px;overflow-y:auto">
+        ${messages.map((msg) => `
+          <div class="notif">
+            <div class="n-title">${msg.sender_role === 'admin' ? '🛡️ Support' : 'You'} <span class="muted small">· ${UI.timeAgo(msg.created_at)}</span></div>
+            <div class="n-msg">${UI.esc(msg.message)}</div>
+          </div>`).join('')}
+      </div>
+      ${ticket.status !== 'closed' ? `
+      <div class="copy-row" style="margin-top:12px">
+        <input class="input" id="tk-reply" placeholder="Type a reply…">
+        <button class="btn btn-primary btn-sm" id="tk-send">Send</button>
+      </div>` : ''}`);
+    const send = m.querySelector('#tk-send');
+    if (send) send.onclick = async () => {
+      const text = m.querySelector('#tk-reply').value.trim();
+      if (!text) return;
+      await API.post(`/api/notifications/tickets/${id}/reply`, { message: text });
+      UI.toast('Reply sent');
+      m.remove(); openTicket(id);
+    };
+  } catch (e) { UI.toast(e.message, 'error'); }
+}
+UI.el('tk-btn').onclick = async () => {
+  const subject = UI.el('tk-subject').value.trim();
+  const message = UI.el('tk-message').value.trim();
+  if (!subject || !message) return UI.toast('Subject and message required', 'error');
+  try {
+    await API.post('/api/notifications/tickets', { subject, message });
+    UI.toast('Ticket opened — we reply within 24h');
+    UI.el('tk-subject').value = ''; UI.el('tk-message').value = '';
+    loadTickets();
+  } catch (e) { UI.toast(e.message, 'error'); }
+};
+loadTickets();
+
+// Live chat
+let lastChatCount = 0;
+async function loadChat() {
+  try {
+    const { messages } = await API.get('/api/notifications/chat');
+    UI.el('chat-count').textContent = `${messages.length} messages`;
+    UI.el('chat-box').innerHTML = messages.map((c) => `
+      <div class="notif">
+        <div class="n-title">${UI.esc(c.name)} ${c.role === 'admin' ? '<span class="badge">admin</span>' : ''} <span class="muted small">· ${UI.timeAgo(c.created_at)}</span></div>
+        <div class="n-msg">${UI.esc(c.message)}</div>
+      </div>`).join('') || '<p class="muted small">No messages yet — say hi!</p>';
+    UI.el('chat-box').scrollTop = UI.el('chat-box').scrollHeight;
+  } catch { /* ignore */ }
+}
+UI.el('chat-send').onclick = async () => {
+  const text = UI.el('chat-input').value.trim();
+  if (!text) return;
+  UI.el('chat-input').value = '';
+  try { await API.post('/api/notifications/chat', { message: text }); loadChat(); }
+  catch (e) { UI.toast(e.message, 'error'); }
+};
+UI.el('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') UI.el('chat-send').click(); });
+document.addEventListener('tc:chat', loadChat);
+loadChat();
+setInterval(loadChat, 15000);
+</script>
+</body>
+</html>

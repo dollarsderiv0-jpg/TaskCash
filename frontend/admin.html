@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — TaskCash Kenya</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash <span class="badge" style="margin-left:6px">ADMIN</span></a>
+    <div class="nav-links" id="nav-links">
+      <a href="/admin.html">Overview</a>
+      <a href="/dashboard.html">My account</a>
+      <a href="#" id="logout">Logout</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <button class="icon-btn nav-burger" aria-label="Menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<section style="padding:30px 0">
+  <div class="container">
+    <h1 style="margin:0 0 20px;font-size:1.6rem">Admin control</h1>
+
+    <!-- Totals -->
+    <div class="stat-grid" id="totals" style="margin-bottom:22px">
+      <div class="glass stat"><div class="icon">👥</div><div class="label">Users</div><div class="value" id="t-users">—</div></div>
+      <div class="glass stat"><div class="icon">📥</div><div class="label">Deposits</div><div class="value" id="t-deposits">—</div></div>
+      <div class="glass stat"><div class="icon">📤</div><div class="label">Withdrawals</div><div class="value" id="t-withdrawals">—</div></div>
+      <div class="glass stat"><div class="icon">✅</div><div class="label">Tasks approved</div><div class="value" id="t-tasks">—</div></div>
+      <div class="glass stat"><div class="icon">⏳</div><div class="label">Pending review</div><div class="value" id="t-pending">—</div></div>
+      <div class="glass stat"><div class="icon">🚫</div><div class="label">Suspended</div><div class="value" id="t-susp">—</div></div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid-2" style="margin-bottom:22px">
+      <div class="glass card"><strong>Money flow (14 days)</strong><canvas id="ch-money" height="150"></canvas></div>
+      <div class="glass card"><strong>User growth (14 days)</strong><canvas id="ch-users" height="150"></canvas></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="pill-tabs" id="tabs">
+      <button class="pill-tab active" data-tab="withdrawals">Withdrawals</button>
+      <button class="pill-tab" data-tab="deposits">Deposits</button>
+      <button class="pill-tab" data-tab="completions">Task review</button>
+      <button class="pill-tab" data-tab="users">Users</button>
+      <button class="pill-tab" data-tab="tasks">Tasks</button>
+      <button class="pill-tab" data-tab="kyc">KYC</button>
+      <button class="pill-tab" data-tab="packages">Packages</button>
+      <button class="pill-tab" data-tab="promos">Promos</button>
+      <button class="pill-tab" data-tab="announcements">Announcements</button>
+      <button class="pill-tab" data-tab="tickets">Tickets</button>
+      <button class="pill-tab" data-tab="broadcast">Broadcast</button>
+    </div>
+
+    <div id="panel"><p class="muted small">Select a tab.</p></div>
+  </div>
+</section>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+const me = UI.requireAdmin();
+UI.el('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await API.post('/api/auth/logout').catch(() => {});
+  API.clearSession(); location.href = '/login.html';
+});
+
+const S = (id) => UI.el(id);
+const badge = (st) => st === 'approved' ? '<span class="badge">approved</span>'
+  : st === 'pending' ? '<span class="badge badge-warn">pending</span>'
+  : st === 'rejected' ? '<span class="badge badge-danger">rejected</span>'
+  : st === 'verified' ? '<span class="badge">verified</span>'
+  : `<span class="badge badge-gray">${UI.esc(st || '—')}</span>`;
+
+// ── Analytics ──
+(async () => {
+  try {
+    const { totals, series } = await API.get('/api/admin/analytics');
+    S('t-users').textContent = totals.users;
+    S('t-deposits').textContent = UI.kes0(totals.deposits);
+    S('t-withdrawals').textContent = UI.kes0(totals.withdrawals);
+    S('t-tasks').textContent = totals.tasks_approved;
+    S('t-pending').textContent = totals.tasks_pending;
+    S('t-susp').textContent = totals.suspended;
+
+    const labels = series.users.map((r) => r.day.slice(5));
+    const gridColor = 'rgba(148,163,184,0.15)';
+    const fontColor = '#93a3a3';
+
+    new Chart(S('ch-money'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Deposits (KES)', data: series.deposits.map((r) => r.total), borderColor: '#39ff14', backgroundColor: 'rgba(57,255,20,0.08)', fill: true, tension: 0.35 },
+          { label: 'Withdrawals (KES)', data: series.withdrawals.map((r) => r.total), borderColor: '#ff5470', backgroundColor: 'rgba(255,84,112,0.06)', fill: true, tension: 0.35 },
+        ],
+      },
+      options: { plugins: { legend: { labels: { color: fontColor } } }, scales: { x: { ticks: { color: fontColor }, grid: { color: gridColor } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } },
+    });
+    new Chart(S('ch-users'), {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'New users', data: series.users.map((r) => r.total), backgroundColor: 'rgba(57,255,20,0.5)' }] },
+      options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { color: fontColor }, grid: { color: gridColor } }, y: { ticks: { color: fontColor }, grid: { color: gridColor }, beginAtZero: true } } },
+    });
+  } catch (e) { UI.toast(e.message, 'error'); }
+})();
+
+// ── Tabs ──
+let current = 'withdrawals';
+document.querySelectorAll('#tabs .pill-tab').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('#tabs .pill-tab').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    current = b.dataset.tab;
+    render();
+  };
+});
+
+async function render() {
+  const p = S('panel');
+  p.innerHTML = '<p class="muted small">Loading…</p>';
+  try {
+    if (current === 'withdrawals') return renderWithdrawals(await API.get('/api/admin/withdrawals?status=pending'));
+    if (current === 'deposits') return renderDeposits(await API.get('/api/admin/deposits?status=pending'));
+    if (current === 'completions') return renderCompletions(await API.get('/api/admin/completions?status=pending'));
+    if (current === 'users') return renderUsers(await API.get('/api/admin/users'));
+    if (current === 'tasks') return renderTasks(await API.get('/api/admin/tasks'));
+    if (current === 'kyc') return renderKyc(await API.get('/api/admin/kyc'));
+    if (current === 'packages') return renderPackages(await API.get('/api/admin/packages'));
+    if (current === 'promos') return renderPromos(await API.get('/api/admin/promos'));
+    if (current === 'announcements') return renderAnnouncements(await API.get('/api/admin/announcements'));
+    if (current === 'tickets') return renderTickets(await API.get('/api/admin/tickets'));
+    if (current === 'broadcast') return renderBroadcast();
+  } catch (e) {
+    p.innerHTML = `<p class="muted small">${UI.esc(e.message)}</p>`;
+  }
+}
+
+// ── Renderers ──
+function renderWithdrawals({ withdrawals }) {
+  S('panel').innerHTML = withdrawals.length ? `
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Date</th><th>User</th><th>Method</th><th>Amount</th><th>Net</th><th>Destination</th><th>Actions</th></tr></thead>
+      <tbody>${withdrawals.map((w) => `
+        <tr>
+          <td>${new Date(w.created_at).toLocaleDateString('en-KE')}</td>
+          <td>${UI.esc(w.username)}</td>
+          <td>${UI.esc(w.method)}</td>
+          <td><strong>${UI.kes(w.amount)}</strong><br><span class="muted small">fee ${UI.kes(w.fee)}</span></td>
+          <td style="color:var(--neon);font-weight:700">${UI.kes(w.net_amount)}</td>
+          <td class="mono small">${UI.esc(w.destination)}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" data-approve="${w.id}">Approve</button>
+            <button class="btn btn-danger btn-sm" data-reject="${w.id}">Reject</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`
+    : '<p class="muted small">No pending withdrawals 🎉</p>';
+
+  S('panel').querySelectorAll('[data-approve]').forEach((b) => {
+    b.onclick = async () => {
+      if (!(await UI.confirm('Approve this withdrawal and mark it paid?'))) return;
+      await API.post(`/api/admin/withdrawals/${b.dataset.approve}/approve`);
+      UI.toast('Withdrawal approved'); render();
+    };
+  });
+  S('panel').querySelectorAll('[data-reject]').forEach((b) => {
+    b.onclick = async () => {
+      const note = prompt('Reason for rejection:') || 'Did not pass review';
+      await API.post(`/api/admin/withdrawals/${b.dataset.reject}/reject`, { note });
+      UI.toast('Withdrawal rejected — funds returned'); render();
+    };
+  });
+}
+
+function renderDeposits({ deposits }) {
+  S('panel').innerHTML = deposits.length ? `
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Date</th><th>User</th><th>Phone</th><th>Amount</th><th>Ref</th><th>Actions</th></tr></thead>
+      <tbody>${deposits.map((d) => `
+        <tr>
+          <td>${new Date(d.created_at).toLocaleDateString('en-KE')}</td>
+          <td>${UI.esc(d.username)}</td>
+          <td class="mono small">${UI.esc(d.phone || '')}</td>
+          <td><strong>${UI.kes(d.amount)}</strong></td>
+          <td class="mono small">${UI.esc(d.reference || d.provider_ref || '—')}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" data-approve="${d.id}">Approve</button>
+            <button class="btn btn-danger btn-sm" data-reject="${d.id}">Reject</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`
+    : '<p class="muted small">No pending deposits.</p>';
+
+  S('panel').querySelectorAll('[data-approve]').forEach((b) => {
+    b.onclick = async () => {
+      await API.post(`/api/admin/deposits/${b.dataset.approve}/approve`);
+      UI.toast('Deposit approved'); render();
+    };
+  });
+  S('panel').querySelectorAll('[data-reject]').forEach((b) => {
+    b.onclick = async () => { await API.post(`/api/admin/deposits/${b.dataset.reject}/reject`); render(); };
+  });
+}
+
+function renderCompletions({ completions }) {
+  S('panel').innerHTML = completions.length ? `
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Date</th><th>User</th><th>Task</th><th>Reward</th><th>Proof</th><th>Actions</th></tr></thead>
+      <tbody>${completions.map((c) => `
+        <tr>
+          <td>${new Date(c.created_at).toLocaleDateString('en-KE')}</td>
+          <td>${UI.esc(c.user)}</td>
+          <td>${UI.esc(c.task)}</td>
+          <td><strong>${UI.kes0(c.reward)}</strong></td>
+          <td>${c.proof ? (String(c.proof).startsWith('data:image') ? `<a href="${c.proof}" target="_blank">view image</a>` : `<span class="mono small">${UI.esc(String(c.proof).slice(0, 40))}</span>`) : '—'}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" data-approve="${c.id}">Approve</button>
+            <button class="btn btn-danger btn-sm" data-reject="${c.id}">Reject</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`
+    : '<p class="muted small">No submissions awaiting review.</p>';
+
+  S('panel').querySelectorAll('[data-approve]').forEach((b) => {
+    b.onclick = async () => {
+      await API.post(`/api/admin/completions/${b.dataset.approve}/approve`);
+      UI.toast('Task approved — user credited'); render();
+    };
+  });
+  S('panel').querySelectorAll('[data-reject]').forEach((b) => {
+    b.onclick = async () => {
+      const note = prompt('Reason for rejection:') || '';
+      await API.post(`/api/admin/completions/${b.dataset.reject}/reject`, { note });
+      UI.toast('Submission rejected'); render();
+    };
+  });
+}
+
+function renderUsers({ users }) {
+  S('panel').innerHTML = `
+    <input class="input" id="u-search" placeholder="Search by name, email, username, phone…" style="max-width:420px;margin-bottom:14px">
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>User</th><th>Contact</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${users.map((u) => `
+        <tr>
+          <td><strong>${UI.esc(u.username)}</strong><br><span class="muted small">${UI.esc(u.fullname)}</span></td>
+          <td class="small">${UI.esc(u.email)}<br>${UI.esc(u.phone)}</td>
+          <td><strong>${UI.kes(u.balance)}</strong><br><span class="muted small">earned ${UI.kes0(u.total_earned)}</span></td>
+          <td>${u.status === 'suspended' ? '<span class="badge badge-danger">suspended</span>' : '<span class="badge">active</span>'} ${badge(u.kyc_status)}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" data-susp="${u.id}" data-cur="${u.status}">${u.status === 'suspended' ? 'Unsuspend' : 'Suspend'}</button>
+            <button class="btn btn-ghost btn-sm" data-adj="${u.id}">Adjust</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  const search = S('u-search');
+  search.oninput = () => {
+    const q = search.value.toLowerCase();
+    document.querySelectorAll('#panel tbody tr').forEach((tr) => {
+      tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  };
+  S('panel').querySelectorAll('[data-susp]').forEach((b) => {
+    b.onclick = async () => {
+      await API.post(`/api/admin/users/${b.dataset.susp}/suspend`);
+      UI.toast('Status updated'); render();
+    };
+  });
+  S('panel').querySelectorAll('[data-adj]').forEach((b) => {
+    b.onclick = async () => {
+      const delta = prompt('Adjust balance by (use negative to debit, e.g. -100):');
+      if (!delta) return;
+      await API.post(`/api/admin/users/${b.dataset.adj}/adjust-balance`, { delta: Number(delta) });
+      UI.toast('Balance adjusted'); render();
+    };
+  });
+}
+
+function renderTasks({ tasks }) {
+  S('panel').innerHTML = `
+    <button class="btn btn-primary btn-sm" id="new-task" style="margin-bottom:14px">+ New task</button>
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Title</th><th>Category</th><th>Reward</th><th>Verify</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${tasks.map((t) => `
+        <tr>
+          <td>${UI.esc(t.title)}</td>
+          <td>${UI.esc(t.category)}</td>
+          <td><strong>${UI.kes0(t.reward)}</strong></td>
+          <td>${UI.esc(t.verification_type)}</td>
+          <td>${t.status === 'active' ? '<span class="badge">active</span>' : '<span class="badge badge-gray">inactive</span>'}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" data-edit='${encodeURIComponent(JSON.stringify(t))}'>Edit</button>
+            <button class="btn btn-danger btn-sm" data-del="${t.id}">Delete</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  S('new-task').onclick = () => taskForm();
+  S('panel').querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = async () => {
+      if (!(await UI.confirm('Delete this task?'))) return;
+      await API.del(`/api/admin/tasks/${b.dataset.del}`);
+      UI.toast('Task deleted'); render();
+    };
+  });
+  S('panel').querySelectorAll('[data-edit]').forEach((b) => {
+    b.onclick = () => taskForm(JSON.parse(decodeURIComponent(b.dataset.edit)));
+  });
+}
+
+function taskForm(t = null) {
+  const m = UI.modal(`
+    <h3>${t ? 'Edit' : 'New'} task</h3>
+    <div class="field"><label>Title</label><input class="input" id="f-title" value="${UI.esc(t ? t.title : '')}"></div>
+    <div class="field"><label>Description</label><textarea class="input" id="f-desc">${UI.esc(t ? t.description : '')}</textarea></div>
+    <div class="grid-2">
+      <div class="field"><label>Category</label>
+        <select class="input" id="f-cat">${['video', 'social', 'survey', 'website', 'affiliate', 'app', 'referral', 'checkin'].map((c) => `<option ${t && t.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Reward (KES)</label><input class="input" id="f-reward" type="number" value="${t ? t.reward : 20}"></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><label>Time required</label><input class="input" id="f-time" value="${UI.esc(t ? (t.time_required || '') : '5 min')}"></div>
+      <div class="field"><label>Verification</label>
+        <select class="input" id="f-verify">${['code', 'screenshot', 'manual', 'auto'].map((c) => `<option ${t && t.verification_type === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid-2">
+      <div class="field"><label>URL (optional)</label><input class="input" id="f-url" value="${UI.esc(t ? (t.url || '') : '')}"></div>
+      <div class="field"><label>Daily limit</label><input class="input" id="f-limit" type="number" value="${t ? t.daily_limit : 1}"></div>
+    </div>
+    <div class="field"><label>Verification code (for 'code' type)</label><input class="input" id="f-code" value="${UI.esc(t ? (t.verification_code || '') : '')}" style="text-transform:uppercase"></div>
+    <div class="field"><label>Min package (blank = everyone)</label>
+      <select class="input" id="f-pkg"><option value="">— none —</option>${['Starter', 'Silver', 'Gold', 'Platinum'].map((p) => `<option ${t && t.min_package === p ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+    <div class="field"><label>Instructions</label><textarea class="input" id="f-instr">${UI.esc(t ? (t.instructions || '') : '')}</textarea></div>
+    <button class="btn btn-primary btn-block" id="f-save">${t ? 'Save changes' : 'Create task'}</button>`);
+
+  m.querySelector('#f-save').onclick = async () => {
+    const body = {
+      title: m.querySelector('#f-title').value.trim(),
+      description: m.querySelector('#f-desc').value.trim(),
+      category: m.querySelector('#f-cat').value,
+      reward: Number(m.querySelector('#f-reward').value),
+      time_required: m.querySelector('#f-time').value.trim(),
+      verification_type: m.querySelector('#f-verify').value,
+      url: m.querySelector('#f-url').value.trim() || null,
+      daily_limit: Number(m.querySelector('#f-limit').value),
+      verification_code: m.querySelector('#f-code').value.trim().toUpperCase() || null,
+      min_package: m.querySelector('#f-pkg').value || null,
+      instructions: m.querySelector('#f-instr').value.trim() || null,
+    };
+    try {
+      if (t) await API.put(`/api/admin/tasks/${t.id}`, body);
+      else await API.post('/api/admin/tasks', body);
+      UI.toast(t ? 'Task updated' : 'Task created');
+      m.remove(); render();
+    } catch (e) { UI.toast(e.message, 'error'); }
+  };
+}
+
+function renderKyc({ pending }) {
+  S('panel').innerHTML = pending.length ? `
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>User</th><th>Email</th><th>Submitted</th><th>Actions</th></tr></thead>
+      <tbody>${pending.map((k) => `
+        <tr>
+          <td>${UI.esc(k.username)} <span class="muted small">(${UI.esc(k.fullname)})</span></td>
+          <td>${UI.esc(k.email)}</td>
+          <td>${UI.timeAgo(k.submitted)}</td>
+          <td>
+            <button class="btn btn-primary btn-sm" data-ok="${k.id}">Approve</button>
+            <button class="btn btn-danger btn-sm" data-no="${k.id}">Reject</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`
+    : '<p class="muted small">No pending KYC submissions.</p>';
+
+  S('panel').querySelectorAll('[data-ok]').forEach((b) => {
+    b.onclick = async () => { await API.post(`/api/admin/kyc/${b.dataset.ok}/approve`); UI.toast('KYC approved'); render(); };
+  });
+  S('panel').querySelectorAll('[data-no]').forEach((b) => {
+    b.onclick = async () => { await API.post(`/api/admin/kyc/${b.dataset.no}/reject`); UI.toast('KYC rejected'); render(); };
+  });
+}
+
+function renderPackages({ packages }) {
+  S('panel').innerHTML = `
+    <button class="btn btn-primary btn-sm" id="new-pkg" style="margin-bottom:14px">+ New package</button>
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Name</th><th>Price</th><th>Daily tasks</th><th>Duration</th><th>Active</th><th>Actions</th></tr></thead>
+      <tbody>${packages.map((p) => `
+        <tr>
+          <td><strong>${UI.esc(p.name)}</strong><br><span class="muted small">${UI.esc((p.benefits || '').slice(0, 50))}</span></td>
+          <td>${UI.kes0(p.price)}</td>
+          <td>${p.daily_tasks}</td>
+          <td>${p.duration_days}d</td>
+          <td>${p.is_active ? '✅' : '—'}</td>
+          <td>
+            <button class="btn btn-ghost btn-sm" data-edit-pkg='${encodeURIComponent(JSON.stringify(p))}'>Edit</button>
+            <button class="btn btn-ghost btn-sm" data-tgl="${p.id}" data-cur="${p.is_active ? 1 : 0}">${p.is_active ? 'Disable' : 'Enable'}</button>
+          </td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+
+  S('new-pkg').onclick = () => pkgForm();
+  S('panel').querySelectorAll('[data-edit-pkg]').forEach((b) => {
+    b.onclick = () => pkgForm(JSON.parse(decodeURIComponent(b.dataset.editPkg)));
+  });
+  S('panel').querySelectorAll('[data-tgl]').forEach((b) => {
+    b.onclick = async () => {
+      await API.put(`/api/admin/packages/${b.dataset.tgl}`, { is_active: b.dataset.cur === '0' });
+      render();
+    };
+  });
+}
+
+function pkgForm(p = null) {
+  const m = UI.modal(`
+    <h3>${p ? 'Edit' : 'New'} package</h3>
+    <div class="field"><label>Name</label><input class="input" id="pk-name" value="${UI.esc(p ? p.name : '')}"></div>
+    <div class="grid-2">
+      <div class="field"><label>Price (KES)</label><input class="input" id="pk-price" type="number" value="${p ? p.price : 500}"></div>
+      <div class="field"><label>Daily tasks</label><input class="input" id="pk-tasks" type="number" value="${p ? p.daily_tasks : 6}"></div>
+    </div>
+    <div class="field"><label>Duration (days)</label><input class="input" id="pk-dur" type="number" value="${p ? p.duration_days : 30}"></div>
+    <div class="field"><label>Benefits (one line)</label><input class="input" id="pk-ben" value="${UI.esc(p ? (p.benefits || '') : '')}"></div>
+    <button class="btn btn-primary btn-block" id="pk-save">Save</button>`);
+  m.querySelector('#pk-save').onclick = async () => {
+    const body = {
+      name: m.querySelector('#pk-name').value.trim(),
+      price: Number(m.querySelector('#pk-price').value),
+      daily_tasks: Number(m.querySelector('#pk-tasks').value),
+      duration_days: Number(m.querySelector('#pk-dur').value),
+      benefits: m.querySelector('#pk-ben').value.trim(),
+    };
+    try {
+      if (p) await API.put(`/api/admin/packages/${p.id}`, body);
+      else await API.post('/api/admin/packages', body);
+      UI.toast('Saved'); m.remove(); render();
+    } catch (e) { UI.toast(e.message, 'error'); }
+  };
+}
+
+function renderPromos({ promos }) {
+  S('panel').innerHTML = `
+    <div class="copy-row" style="max-width:420px;margin-bottom:14px">
+      <input class="input" id="pr-code" placeholder="CODE" style="text-transform:uppercase">
+      <input class="input" id="pr-amt" type="number" placeholder="KES">
+      <button class="btn btn-primary btn-sm" id="pr-add">Create</button>
+    </div>
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Code</th><th>Amount</th><th>Used</th><th>Actions</th></tr></thead>
+      <tbody>${promos.map((p) => `
+        <tr>
+          <td class="mono">${UI.esc(p.code)}</td>
+          <td>${UI.kes0(p.amount)}</td>
+          <td>${p.used_count}/${p.max_uses}</td>
+          <td><button class="btn btn-danger btn-sm" data-del="${p.id}">Delete</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
+  S('pr-add').onclick = async () => {
+    try {
+      await API.post('/api/admin/promos', { code: S('pr-code').value.trim(), amount: Number(S('pr-amt').value) });
+      UI.toast('Promo created'); render();
+    } catch (e) { UI.toast(e.message, 'error'); }
+  };
+  S('panel').querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = async () => { await API.del(`/api/admin/promos/${b.dataset.del}`); render(); };
+  });
+}
+
+function renderAnnouncements({ announcements }) {
+  S('panel').innerHTML = `
+    <div class="glass card" style="margin-bottom:14px;max-width:560px">
+      <div class="field"><input class="input" id="an-title" placeholder="Title"></div>
+      <div class="field"><textarea class="input" id="an-body" placeholder="Message…"></textarea></div>
+      <button class="btn btn-primary btn-sm" id="an-add">Publish + broadcast</button>
+    </div>
+    ${announcements.map((a) => `
+      <div class="glass card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;gap:10px">
+          <strong>${UI.esc(a.title)}</strong>
+          <button class="btn btn-danger btn-sm" data-del="${a.id}">Delete</button>
+        </div>
+        <p class="muted small" style="margin:6px 0 0">${UI.esc(a.body)}</p>
+      </div>`).join('')}`;
+  S('an-add').onclick = async () => {
+    try {
+      await API.post('/api/admin/announcements', { title: S('an-title').value.trim(), body: S('an-body').value.trim() });
+      UI.toast('Announcement published'); render();
+    } catch (e) { UI.toast(e.message, 'error'); }
+  };
+  S('panel').querySelectorAll('[data-del]').forEach((b) => {
+    b.onclick = async () => { await API.del(`/api/admin/announcements/${b.dataset.del}`); render(); };
+  });
+}
+
+function renderTickets({ tickets }) {
+  S('panel').innerHTML = tickets.length ? `
+    <div class="table-wrap"><table class="tbl">
+      <thead><tr><th>Updated</th><th>User</th><th>Subject</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>${tickets.map((t) => `
+        <tr>
+          <td>${UI.timeAgo(t.updated_at)}</td>
+          <td>${UI.esc(t.username)}</td>
+          <td>${UI.esc(t.subject)}</td>
+          <td>${t.status === 'open' ? '<span class="badge badge-warn">open</span>' : t.status === 'answered' ? '<span class="badge">answered</span>' : '<span class="badge badge-gray">closed</span>'}</td>
+          <td><button class="btn btn-ghost btn-sm" data-re="${t.id}" data-uid="${t.user_id}">Open</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div>`
+    : '<p class="muted small">No tickets.</p>';
+
+  S('panel').querySelectorAll('[data-re]').forEach((b) => {
+    b.onclick = async () => {
+      const { ticket, messages } = await API.get(`/api/notifications/tickets/${b.dataset.re}`);
+      const m = UI.modal(`
+        <h3>${UI.esc(ticket.subject)}</h3>
+        <div style="max-height:280px;overflow-y:auto">
+          ${messages.map((msg) => `
+            <div class="notif">
+              <div class="n-title">${msg.sender_role === 'admin' ? 'You (support)' : UI.esc(ticket.username)} <span class="muted small">· ${UI.timeAgo(msg.created_at)}</span></div>
+              <div class="n-msg">${UI.esc(msg.message)}</div>
+            </div>`).join('')}
+        </div>
+        <div class="copy-row" style="margin-top:12px">
+          <input class="input" id="ad-reply" placeholder="Reply as support…">
+          <button class="btn btn-primary btn-sm" id="ad-send">Send</button>
+        </div>`);
+      m.querySelector('#ad-send').onclick = async () => {
+        const text = m.querySelector('#ad-reply').value.trim();
+        if (!text) return;
+        await API.post(`/api/notifications/tickets/${ticket.id}/reply`, { message: text });
+        UI.toast('Reply sent'); m.remove(); render();
+      };
+    };
+  });
+}
+
+function renderBroadcast() {
+  S('panel').innerHTML = `
+    <div class="glass card" style="max-width:560px">
+      <h3 style="margin-top:0">📣 Broadcast notification</h3>
+      <p class="muted small">Sent to every connected client in real time and stored for all users.</p>
+      <div class="field"><input class="input" id="bc-title" placeholder="Title"></div>
+      <div class="field"><textarea class="input" id="bc-msg" placeholder="Message…"></textarea></div>
+      <div class="field"><label>Type</label>
+        <select class="input" id="bc-type"><option>info</option><option>success</option><option>warning</option><option>danger</option></select></div>
+      <button class="btn btn-primary btn-block" id="bc-send">Send broadcast</button>
+    </div>`;
+  S('bc-send').onclick = async () => {
+    try {
+      await API.post('/api/admin/broadcast', {
+        title: S('bc-title').value.trim(),
+        message: S('bc-msg').value.trim(),
+        type: S('bc-type').value,
+      });
+      UI.toast('Broadcast sent 📣'); S('bc-title').value = ''; S('bc-msg').value = '';
+    } catch (e) { UI.toast(e.message, 'error'); }
+  };
+}
+
+render();
+</script>
+</body>
+</html>

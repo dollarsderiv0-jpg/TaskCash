@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tasks — TaskCash Kenya</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#39ff14">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="logo" href="/"><span class="k">Task</span>Cash</a>
+    <div class="nav-links" id="nav-links">
+      <a href="/dashboard.html">Dashboard</a>
+      <a href="/tasks.html">Tasks</a>
+      <a href="/wallet.html">Wallet</a>
+      <a href="/referrals.html">Referrals</a>
+      <a href="/leaderboard.html">Leaderboard</a>
+      <a href="/extras.html">Extras</a>
+      <a href="/settings.html">Settings</a>
+      <a href="#" id="logout">Logout</a>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">☀️</button>
+      <button class="icon-btn nav-burger" aria-label="Menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<section style="padding:34px 0">
+  <div class="container">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px">
+      <div>
+        <h1 style="margin:0;font-size:1.6rem">Task marketplace</h1>
+        <p class="muted small" style="margin:4px 0 0" id="cap-note">Loading your daily cap…</p>
+      </div>
+      <a class="btn btn-ghost btn-sm" href="/wallet.html">Upgrade package</a>
+    </div>
+
+    <div class="pill-tabs" id="cat-tabs">
+      <button class="pill-tab active" data-c="all">All</button>
+      <button class="pill-tab" data-c="video">🎬 Videos</button>
+      <button class="pill-tab" data-c="social">📣 Social</button>
+      <button class="pill-tab" data-c="survey">📊 Surveys</button>
+      <button class="pill-tab" data-c="website">🌐 Websites</button>
+      <button class="pill-tab" data-c="affiliate">🤝 Affiliate</button>
+      <button class="pill-tab" data-c="app">📲 Apps</button>
+      <button class="pill-tab" data-c="referral">👥 Referral</button>
+      <button class="pill-tab" data-c="checkin">📅 Check-in</button>
+    </div>
+
+    <div class="grid-3" id="task-grid">
+      <div class="skeleton" style="height:200px"></div>
+      <div class="skeleton" style="height:200px"></div>
+      <div class="skeleton" style="height:200px"></div>
+    </div>
+    <p class="center muted small" id="empty" style="display:none;margin-top:30px">No tasks in this category right now — check back soon.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p class="disclaimer">Tasks are sponsored activities. Rewards are credited only after the task's verification method passes. Attempting to game verification (fake screenshots, codes, bots) leads to rejection and possible suspension.</p>
+  </div>
+</footer>
+
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/ui.js"></script>
+<script>
+UI.setTheme(localStorage.getItem('tc_theme') || 'dark');
+const me = UI.requireLogin();
+
+UI.el('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await API.post('/api/auth/logout').catch(() => {});
+  API.clearSession(); location.href = '/login.html';
+});
+
+let tasks = []; let cat = 'all';
+
+function statusBadge(t) {
+  if (t.locked) return '<span class="badge badge-warn">🔒 Package required</span>';
+  if (t.completed) return '<span class="badge badge-gray">Done today</span>';
+  return '<span class="badge">Open</span>';
+}
+
+function render() {
+  const grid = UI.el('task-grid');
+  const rows = cat === 'all' ? tasks : tasks.filter((t) => t.category === cat);
+  UI.el('empty').style.display = rows.length ? 'none' : 'block';
+  grid.innerHTML = rows.map((t) => `
+    <div class="glass card task-card card-hover">
+      <div class="task-top">
+        <strong>${UI.esc(t.title)}</strong>
+        <span class="task-reward">${UI.kes0(t.reward)}</span>
+      </div>
+      <p class="muted small" style="margin:0">${UI.esc((t.description || '').slice(0, 110))}${(t.description || '').length > 110 ? '…' : ''}</p>
+      <div class="chip-row">
+        <span class="chip">${UI.esc(t.time_required || '—')}</span>
+        <span class="chip">${UI.esc(t.verification_type)} verify</span>
+        <span class="chip">${t.done_today}/${t.daily_limit} today</span>
+      </div>
+      <div style="margin-top:auto;display:flex;gap:8px;align-items:center;justify-content:space-between">
+        ${statusBadge(t)}
+        <button class="btn btn-primary btn-sm" data-open="${t.id}" ${t.locked || t.completed ? 'disabled' : ''}>
+          ${t.locked ? 'Upgrade' : t.completed ? 'Completed' : 'Start'}
+        </button>
+      </div>
+    </div>`).join('');
+
+  grid.querySelectorAll('[data-open]').forEach((b) => {
+    b.onclick = () => {
+      const t = tasks.find((x) => x.id === Number(b.dataset.open));
+      if (t.locked) { location.href = '/wallet.html'; return; }
+      openTask(t);
+    };
+  });
+}
+
+function openTask(t) {
+  if (t.category === 'video') return openVideoTask(t);
+  const verifyUI = {
+    code: `<div class="field"><label>Verification code</label>
+      <input class="input" id="proof" placeholder="Code shown after completing the task">
+      <div class="hint">Find the code where the task instructions say</div></div>`,
+    screenshot: `<div class="field"><label>Upload screenshot proof</label>
+      <input type="file" class="input" id="file" accept="image/*">
+      <div class="hint" id="file-hint">PNG/JPG, max ~2MB</div></div>`,
+    manual: `<div class="glass" style="padding:12px;margin-bottom:14px" class="small muted">
+      This task is reviewed manually with our partner. Submit and we'll notify you once approved (usually within 24h).</div>`,
+    auto: `<div class="glass" style="padding:12px;margin-bottom:14px">This task verifies automatically when you submit.</div>`,
+  }[t.verification_type] || '';
+
+  const m = UI.modal(`
+    <h3>${UI.esc(t.title)}</h3>
+    <div class="chip-row" style="margin:10px 0">
+      <span class="badge">${UI.kes0(t.reward)} reward</span>
+      <span class="chip">${UI.esc(t.time_required || '—')}</span>
+      <span class="chip">${UI.esc(t.verification_type)} verification</span>
+    </div>
+    <p class="muted small">${UI.esc(t.description)}</p>
+    ${t.instructions ? `<div class="glass" style="padding:12px;margin-bottom:14px"><strong class="small">Instructions</strong><p class="small muted" style="margin:6px 0 0">${UI.esc(t.instructions)}</p></div>` : ''}
+    ${t.url ? `<p><a href="${UI.esc(t.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Open task link ↗</a></p>` : ''}
+    ${verifyUI}
+    <button class="btn btn-primary btn-block" id="do-submit">Submit task</button>`);
+
+  let proof = '';
+  const fileInput = m.querySelector('#file');
+  if (fileInput) {
+    fileInput.onchange = () => {
+      const f = fileInput.files[0];
+      if (!f) return;
+      if (f.size > 2_000_000) { UI.toast('Image too large (max ~2MB)', 'error'); fileInput.value = ''; return; }
+      const r = new FileReader();
+      r.onload = () => { proof = r.result; UI.el('file-hint') && (UI.el('file-hint').textContent = `✅ ${f.name} ready`); };
+      r.readAsDataURL(f);
+    };
+  }
+  m.querySelector('#do-submit').onclick = async () => {
+    const btn = m.querySelector('#do-submit');
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    const body = {};
+    if (t.verification_type === 'code') body.proof = m.querySelector('#proof') ? m.querySelector('#proof').value.trim() : '';
+    if (t.verification_type === 'screenshot') body.proof = proof;
+    try {
+      const res = await API.post(`/api/tasks/${t.id}/submit`, body);
+      UI.toast(res.message, res.status === 'approved' ? 'success' : 'info', 6000);
+      m.remove(); load();
+    } catch (e) { UI.toast(e.message, 'error', 5000); btn.disabled = false; btn.textContent = 'Submit task'; }
+  };
+}
+
+function openVideoTask(t) {
+  const m = UI.modal(`
+    <h3>${UI.esc(t.title)}</h3>
+    <div class="chip-row" style="margin:10px 0">
+      <span class="badge">${UI.kes0(t.reward)} reward</span>
+      <span class="chip">${UI.esc(t.time_required)}s watch required</span>
+    </div>
+    <div class="video-frame"><iframe id="vid" width="100%" height="100%" src="${UI.esc(t.url || '')}" title="Sponsored video" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>
+    <div class="progress" style="margin:14px 0 6px"><div id="bar" style="width:0%"></div></div>
+    <p class="small muted center" id="timer">Starting…</p>
+    <button class="btn btn-primary btn-block" id="claim" disabled>Watch to the end to claim</button>`);
+
+  const btn = m.querySelector('#claim');
+  fetch(`/api/tasks/${t.id}/video-session`, { headers: { Authorization: `Bearer ${localStorage.getItem('tc_token') || ''}` } })
+    .then((r) => r.json())
+    .then(({ session, seconds }) => {
+      let left = seconds;
+      const iv = setInterval(() => {
+        left -= 1;
+        m.querySelector('#bar').style.width = `${Math.min(100, ((seconds - left) / seconds) * 100)}%`;
+        m.querySelector('#timer').textContent = left > 0 ? `Keep watching… ${left}s remaining` : '✅ Watch verified — claim your reward!';
+        if (left <= 0) { clearInterval(iv); btn.disabled = false; btn.textContent = 'Claim reward'; }
+      }, 1000);
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const res = await API.post(`/api/tasks/${t.id}/video-verify`, { session, elapsed: seconds });
+          UI.toast(res.message, 'success', 6000);
+          m.remove(); load();
+        } catch (e) { UI.toast(e.message, 'error', 5000); btn.disabled = false; }
+      };
+    })
+    .catch(() => UI.toast('Could not start watch session', 'error'));
+}
+
+async function load() {
+  try {
+    const data = await API.get('/api/tasks');
+    tasks = data.tasks;
+    UI.el('cap-note').textContent = data.package
+      ? `${data.package.name} package — ${data.package.daily_tasks} submissions/day`
+      : `Free tier — ${data.daily_cap} submissions/day (upgrade for more)`;
+    render();
+  } catch (e) { UI.toast(e.message, 'error'); }
+}
+
+document.querySelectorAll('#cat-tabs .pill-tab').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('#cat-tabs .pill-tab').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    cat = b.dataset.c;
+    render();
+  };
+});
+load();
+</script>
+</body>
+</html>
