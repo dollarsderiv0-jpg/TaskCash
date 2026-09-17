@@ -13,7 +13,8 @@
     "seed": "node backend/db/seed.js",
     "smoke": "node scripts/smoke.js",
     "smoke:ui": "node scripts/ui-smoke.js",
-    "check": "node scripts/syntax-check.js"
+    "check": "node scripts/syntax-check.js",
+    "mpesa:check": "node scripts/mpesa-check.js"
   },
   "dependencies": {
     "axios": "^1.20.0",
