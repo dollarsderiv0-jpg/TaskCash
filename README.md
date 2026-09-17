@@ -1,107 +1,135 @@
-# TaskCash Kenya 🇰🇪
+# WATCHREWARDS
 
-A production-ready **task rewards platform**: users complete sponsored tasks, earn KES, refer friends, deposit & withdraw via **M-Pesa**. Built with Node.js + Express + PostgreSQL/Supabase, vanilla JS + Tailwind-style custom CSS frontend, WebSockets, JWT auth and a full admin panel.
+A mobile-first **Watch & Earn** platform for Kenya: users watch eligible videos, earn
+verified rewards, and withdraw to **M-Pesa**. Node.js + Express + PostgreSQL/Supabase
+API, vanilla-JS single-page mobile app (390 × 844 reference viewport), WebSocket
+notifications and a desktop admin console.
 
-> **Compliance first:** TaskCash is a *rewards* platform, **not an investment scheme**. Earnings come only from completed tasks, referrals, and sponsored activities. There are no guaranteed returns — disclaimers are present across the UI, and withdrawals pass KYC + anti-fraud review.
+> **Money rules, enforced in code**
+> - Rewards exist only for watch sessions the **server** verified (real elapsed time,
+>   progress clamped server-side, daily limits).
+> - Balances live in an **immutable ledger** (`wallet_transactions`); the client never
+>   sends a balance and no endpoint trusts one.
+> - A deposit becomes `Success` **only** from a verified M-Pesa result, never because a
+>   user tapped *Continue*.
+> - A withdrawal reserves the amount immediately and stays `Pending` until the payment
+>   provider confirms the payout. Admins cannot mark a transaction paid.
+> - Payment provider credentials live **only** in server-side environment variables.
+> - No guaranteed returns anywhere: deposits do not earn profit or interest.
 
 ---
 
-## ✨ Features
+## Screens
 
-| Area | Highlights |
-|---|---|
-| **Auth** | Register (all required fields + referral capture), login, email verification, forgot/reset password, change password, profile, KYC account verification |
-| **Tasks** | 8 categories (video, social, survey, website, affiliate, app, referral, check-in) · 4 verification methods (code, screenshot, manual, auto) · daily caps by package · anti-fraud (duplicate/IP/UA guards) |
-| **Video tasks** | Embedded player, countdown timer, server-side watch-session verification, instant reward |
-| **Wallet** | M-Pesa STK Push deposits (live Daraja + demo simulator), balance polling, deposit/withdrawal history, 2% withdrawal fee, daily limits, min KES 100 |
-| **Withdrawals** | M-Pesa & bank, KYC-gated, admin approve/reject workflow, funds held in pending balance |
-| **Referrals** | Unique links/codes, 2 levels (10% / 3%), team dashboard, instant commissions on task approval |
-| **Packages** | Starter 500 / Silver 1,000 / Gold 2,500 / Platinum 5,000 — unlock higher daily task limits |
-| **Notifications** | WebSocket real-time toasts + drawer, deposits/withdrawals/task approvals/referrals/promos |
-| **Admin** | Analytics (Chart.js: deposits, withdrawals, user growth, task completions), users (suspend/adjust), KYC review, withdrawal & deposit approvals, task CRUD, packages, promos, announcements, tickets, broadcasts |
-| **Extras** | Leaderboard, daily check-in streaks, achievement badges, promo codes, support tickets, live chat, announcement center, PWA + offline shell, dark/light mode |
+| # | Screen | Route |
+|---|---|---|
+| 01 | Splash (`WATCH • EARN • WITHDRAW`) | `/` |
+| 02 | Login (phone + password) | `#/login` |
+| 03 | Registration (+ optional referral code, terms) | `#/register` |
+| 04–05 | Home (greeting, promo banner, 2 × 2 quick stats) | `#/home` |
+| 06 | Watch & Earn task list | `#/watch` |
+| 07 | Video / task player with claim | `#/watch/:videoId` |
+| 08 | Wallet (balance card, actions, recent transactions) | `#/wallet` |
+| 09–10 | Deposit + deposit status (Pending / Successful / Failed) | `#/deposit`, `#/deposit/:reference` |
+| 11–12 | Withdraw + confirmation sheet + submitted state | `#/withdraw` |
+| 13 | Transaction history with filter tabs | `#/transactions` |
+| 14 | Team / referrals | `#/team` |
+| 15 | Rewards | `#/rewards` |
+| 16 | Notifications | `#/notifications` |
+| 17–20 | Profile, personal information, M-Pesa details, security | `#/profile/...` |
+| 21–24 | Admin dashboard, videos, deposits, withdrawals | `/admin.html` |
+| 25 | Bottom navigation (Home · Watch · Wallet · Team · Profile) | — |
+| 26 | Empty / error states, including session expiry | — |
+| 29 | Responsive 360 → 430 px, centred shell on desktop | — |
 
-## 🚀 Quickstart
+## Quickstart
 
 ```bash
 npm install
-cp .env.example .env      # fill in values (or leave defaults for demo)
-npm run seed              # creates admin, demo users, packages, 11 tasks, promos
-npm run dev               # http://localhost:3000
+cp .env.example .env          # defaults are development-safe
+npm run seed                  # admin, demo user, videos, platform settings
+npm run dev                   # http://localhost:3000
 ```
 
-**Demo logins** (after seed):
-- User — `wanjiku` / `Demo@1234`
-- Admin — `admin@taskcash.co.ke` / `Admin@1234`
+**Demo logins** (after seed)
+- User — `0799000001` / `Demo@1234`
+- Admin — `admin@watchrewards.app` / `Admin@1234` (admin console at `/admin.html`)
 
-**Zero-infrastructure mode:** with no `DATABASE_URL`, the app auto-falls back to a JSON file store (`data/db.json`) so you can demo everything locally. Set `DATABASE_URL` to any PostgreSQL (Supabase pooled string works) for production; `schema.sql` is applied automatically at boot.
+**Zero infrastructure:** with no reachable PostgreSQL the app falls back to a JSON
+store (`data/db.json`); `DB_MODE=json` forces it. Set `DATABASE_URL` (Supabase pooled
+string works) for production — `schema.sql` is applied at boot.
 
-## 📲 M-Pesa setup (Daraja)
+## Payments (real architecture)
 
-1. Create an app at [developer.safaricom.co.ke](https://developer.safaricom.co.ke) → get Consumer Key/Secret.
-2. Use the sandbox shortcode `174379` + the public sandbox passkey for testing.
-3. Set in `.env`:
-   ```
-   MPESA_APP_KEY=...
-   MPESA_APP_SECRET=...
-   MPESA_SHORTCODE=174379
-   MPESA_PASSKEY=...
-   MPESA_CALLBACK_URL=https://your-domain.com/api/mpesa/callback
-   ```
-4. For local testing expose the server (ngrok/cloudflared) and set `MPESA_BASE_URL` to the public URL.
-5. **No keys set = demo mode**: STK pushes are simulated and the callback auto-fires after ~8s so the full UX is testable.
+`backend/services/payments/` is a provider abstraction implementing
+`createDeposit · verifyDeposit · createWithdrawal · verifyWithdrawal · handleCallback`.
 
-Withdrawal payouts (B2C) are marked by an admin after the transfer is made from the platform wallet; the B2C API hook point is annotated in `backend/routes/admin.js`.
+| Mode | When | Behaviour |
+|---|---|---|
+| `mpesa` (live) | `MPESA_APP_KEY` + `MPESA_APP_SECRET` set | STK Push collections, B2C payouts, STK-query / transaction-status verification, `/api/mpesa/callback` |
+| `sandbox` | development without credentials | records a local reference only, **never** returns success; every record is stamped `SANDBOX-` and the UI says so |
+| `unconfigured` | production without credentials | deposits and payouts are refused (HTTP 503) — nothing is faked |
 
-## 🔐 Security
+The sandbox simulator (`/api/mpesa/sandbox/callback`, admin *SIMULATE* buttons) throws
+in production, and `NODE_ENV=production` never exposes it.
 
-- bcrypt (12 rounds) password hashing
-- JWT (httpOnly cookie + Bearer support) with role-based access control (`user` / `admin`)
-- **Strict CSRF**: double-submit cookie + HMAC-signed token on every state-changing API call
-- Rate limiting (auth + global), helmet security headers + CSP, CORS allowlist
-- Parameterized SQL (no string-built queries), XSS-escaped rendering, JSON body limits
-- Anti-fraud: duplicate-submission guards, IP/UA capture on submissions, manual review queue, KYC gate before withdrawals
+## Accounting
 
-## 🗄 Database
+- `wallet_transactions` — immutable ledger, unique `txn_id`, unique `idempotency_key`,
+  types `DEPOSIT · WATCH_REWARD · REFERRAL_REWARD · WITHDRAWAL · FEE · REVERSAL`,
+  statuses `PENDING · COMPLETED · FAILED · REVERSED`.
+- Duplicate provider callbacks are replay-safe: a settled deposit/withdrawal is never
+  settled twice and the ledger key already exists, so the wallet cannot be credited twice.
+- Withdrawals reserve funds (`balance → pending_balance`) so the same money cannot be
+  withdrawn twice while pending; failures release the reservation.
+- Watch rewards are keyed `watch:<session_id>`; referral rewards `referral:<user_id>`
+  (paid once, when the referred user completes their first verified watch reward).
+- Every admin action is written to `audit_logs`.
 
-PostgreSQL schema in `backend/db/schema.sql` (users, packages, tasks, task_completions, deposits, withdrawals, referrals, notifications, email_tokens, promo_codes, achievements, support tickets, announcements, app_settings, earnings feed, chat). Applied automatically at boot; Supabase-compatible.
+## Verification
 
-## 📡 API overview
-
-```
-POST /api/auth/register|login|logout|forgot-password|reset-password|change-password
-GET  /api/auth/me|verify-email  ·  PUT /api/auth/profile  ·  POST /api/auth/kyc
-GET  /api/stats|history|feed|leaderboard   POST /api/checkin
-GET  /api/admin/analytics                  (admin)
-GET  /api/tasks  ·  POST /api/tasks/:id/submit|video-verify  ·  GET /api/tasks/mine
-POST /api/wallet/deposit|withdraw  ·  GET /api/wallet/deposits|withdrawals
-GET  /api/wallet/packages  ·  POST /api/wallet/packages/:id/purchase
-POST /api/wallet/promo/redeem
-GET  /api/notifications|referrals|tickets|announcements|chat
-POST /api/mpesa/callback               (Daraja webhook)
-Admin: /api/admin/users|withdrawals|deposits|tasks|completions|kyc|packages|promos|announcements|broadcast
-WebSocket: ws(s)://host/ws?token=JWT   (notifications, live feed, chat, admin alerts)
+```bash
+npm run check      # node --check on every backend + frontend JS file
+npm run smoke      # 74 API checks: auth, watch validation, deposits, payouts, admin, isolation
+npm run smoke:ui   # renders every screen in headless Chrome and checks the spec'd content
 ```
 
-## ☁️ Deployment
+`npm run smoke` drives a real server on an isolated store and asserts, among other
+things: a reward is refused before the watch requirement is met, a deposit stays
+Pending without a verified provider result, replaying a callback credits nothing twice,
+an admin cannot complete a payout, revoked sessions lose access, one user cannot read
+another's wallet, and no "guaranteed returns" claim or provider credential exists in
+the frontend bundle.
 
-- **Railway** — see `DEPLOY-RAILWAY.md` (single service hosts API + frontend).
-- **Render** — `render.yaml` blueprint included.
-- **Vercel** — `vercel.json` included (Node server). Note: WebSockets need a platform that supports them; Railway/Render are recommended for the full real-time experience.
-- **Frontend on Vercel + API on Railway**: set `CORS_ORIGINS` on the backend to the Vercel domain; the frontend talks to the API same-origin only if proxied — the included setup is single-origin and simplest.
+## API overview
 
-### Environment variables
-See `.env.example` — every variable is documented there (server, security, database, admin bootstrap, M-Pesa, SMTP).
+```
+GET  /api/public/config|health
+POST /api/auth/register|login|logout|forgot-password|reset-password|change-password|logout-all
+GET  /api/auth/me|profile|payout|sessions      PUT /api/auth/profile
+POST /api/auth/phone|payout                    # both require the account password
+GET  /api/home/summary
+GET  /api/watch/videos|rewards|history
+POST /api/watch/sessions · /api/watch/sessions/:id/progress|claim
+GET  /api/wallet/summary|config|transactions|deposits/:id|withdrawals
+POST /api/wallet/deposit|withdraw|withdraw/quote
+GET  /api/team
+GET  /api/notifications · POST /api/notifications/:id/read|read-all
+POST /api/mpesa/callback                       # provider webhook (idempotent)
+POST /api/mpesa/sandbox/callback               # development only, refused in production
+Admin: /api/admin/overview|users|videos|deposits|withdrawals|rewards|referrals|notifications|settings|audit-logs
+WebSocket: ws(s)://host/ws?token=JWT
+```
 
-## 🧪 Verification checklist
+## Security
 
-- `npm run check` — syntax-checks every JS file
-- Register → deposit (demo STK) → complete task → request withdrawal → approve in admin
-- Referral: register with a user's code, approve their task, check L1 commission
+bcrypt password hashing · JWT in an httpOnly cookie with revocable sessions · double-submit
+CSRF guard · rate limiting · helmet + CSP · parameterised SQL · per-user data isolation ·
+masked phone numbers in every response · password re-authentication for phone/payout
+changes.
 
-## ⚠️ Disclaimers & responsible operation
+## Deployment
 
-- No guaranteed returns anywhere in the product; packages unlock task capacity, they do not "pay out".
-- Earnings derive solely from verified task completion, referral commissions on real activity, promos and bonuses.
-- Operators are responsible for complying with local regulations (Kenya: confirm current CBK/ODPC & gambling-vs-rewards guidance), data protection, and tax obligations.
-- The M-Pesa integration includes STK Push (C2B) live-ready; B2C payouts are admin-triggered pending your Daraja production credentials.
+See `DEPLOY-RAILWAY.md`, `render.yaml` (Render blueprint) and `vercel.json`.
+`GET /api/public/health` reports which payment provider is active — if it says
+`unconfigured`, deposits are intentionally disabled.

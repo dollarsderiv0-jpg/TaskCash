@@ -1,9 +1,9 @@
-/* Runs `node --check` over every backend JS file. */
+/* Runs `node --check` over every backend and frontend JS file. */
 const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const roots = ['backend', 'scripts'];
+const roots = ['backend', 'scripts', path.join('frontend', 'assets', 'js')];
 const files = [];
 
 function walk(dir) {

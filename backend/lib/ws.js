@@ -2,6 +2,7 @@
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
+const { Table } = require('../db');
 
 let wss = null;
 const clients = new Map(); // ws -> { userId, role, guest }
@@ -14,14 +15,22 @@ function init(server) {
     try {
       const url = new URL(req.url, 'http://x');
       const t = url.searchParams.get('token') ||
-        (req.headers.cookie || '').match(/taskcash_token=([^;]+)/)?.[1];
+        (req.headers.cookie || '').match(/wr_token=([^;]+)/)?.[1];
       if (t) {
         const payload = jwt.verify(t, config.jwtSecret);
         meta.userId = payload.sub;
         meta.role = payload.role || 'user';
+        meta.sessionId = payload.sid || null;
       }
     } catch { /* guest */ }
     clients.set(ws, meta);
+
+    // Revoked sessions may not subscribe to live updates.
+    if (meta.sessionId) {
+      new Table('login_sessions').get({ session_id: meta.sessionId })
+        .then((row) => { if (row && row.revoked) clients.delete(ws); })
+        .catch(() => {});
+    }
 
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });

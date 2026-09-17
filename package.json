@@ -1,7 +1,7 @@
 {
-  "name": "taskcash",
-  "version": "2.0.0",
-  "description": "TaskCash — global task rewards platform with country-specific rewards and payouts",
+  "name": "watchrewards",
+  "version": "1.0.0",
+  "description": "WATCHREWARDS — mobile-first Watch & Earn platform with a server-side wallet ledger and verified M-Pesa payments",
   "main": "backend/server.js",
   "type": "commonjs",
   "engines": {
@@ -11,7 +11,8 @@
     "start": "node backend/server.js",
     "dev": "node --watch backend/server.js",
     "seed": "node backend/db/seed.js",
-    "simulate": "node scripts/simulate.js",
+    "smoke": "node scripts/smoke.js",
+    "smoke:ui": "node scripts/ui-smoke.js",
     "check": "node scripts/syntax-check.js"
   },
   "dependencies": {
@@ -31,8 +32,9 @@
   "keywords": [
     "fintech",
     "rewards",
+    "watch-and-earn",
     "mpesa",
-    "global"
+    "kenya"
   ],
   "license": "MIT"
 }

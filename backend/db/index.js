@@ -1,11 +1,11 @@
 /**
- * TaskCash — database layer.
+ * WATCHREWARDS — database layer.
  *
  * Two interchangeable modes behind one async interface:
  *  - "pg":   PostgreSQL / Supabase (schema.sql auto-applied at boot, see server.js)
- *  - "json": file-backed fallback (data/db.json) so the app still runs with
- *            zero infrastructure — great for local demo; set DATABASE_URL to a
- *            real Postgres for production.
+ *  - "json": file-backed fallback (data/db.json, or DB_DIR) so the app still
+ *            runs with zero infrastructure — great for local demo and the test
+ *            suites; set DATABASE_URL to a real Postgres for production.
  *
  * Route code only uses the Table helpers + aggregate helpers, so it never
  * branches on the mode.
@@ -15,7 +15,10 @@ const path = require('path');
 const { Pool } = require('pg');
 const config = require('../config');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+// DB_DIR lets tests and demos run against an isolated file store.
+const DATA_DIR = process.env.DB_DIR
+  ? path.resolve(process.env.DB_DIR)
+  : path.join(__dirname, '..', '..', 'data');
 const JSON_FILE = path.join(DATA_DIR, 'db.json');
 
 // ─────────────────────────── JSON mode ───────────────────────────
@@ -300,6 +303,13 @@ function failSoft(err) {
 
 async function init() {
   if (mode) return mode;
+  // DB_MODE=json forces the file store (used by the smoke test and demos).
+  if (String(process.env.DB_MODE || '').toLowerCase() === 'json') {
+    mode = JsonMode;
+    await JsonMode.init();
+    console.log('[db] JSON mode forced (DB_MODE=json)');
+    return mode;
+  }
   try {
     await PgMode.init();
     try {

@@ -29,6 +29,22 @@ function isValidKenyanPhone(input) {
   return /^254(7|1)\d{8}$/.test(toMpesaFormat(input));
 }
 
+/** 2547XXXXXXXX -> 07XXXXXXXX (what Kenyan users expect to see). */
+function displayKenyanPhone(input) {
+  const digits = toMpesaFormat(input);
+  if (/^254\d{9}$/.test(digits)) return `0${digits.slice(3)}`;
+  return String(input || '');
+}
+
+/** 0712345678 / 254712345678 -> 07******78 */
+function maskPhone(input) {
+  const display = displayKenyanPhone(input);
+  if (/^0\d{9}$/.test(display)) return `${display.slice(0, 2)}******${display.slice(-2)}`;
+  const raw = String(input || '');
+  if (raw.length <= 4) return '07******XX';
+  return `${raw.slice(0, 2)}******${raw.slice(-2)}`;
+}
+
 /** Wraps async route handlers so rejections hit the error middleware. */
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -45,4 +61,7 @@ const page = (rows, req) => {
 };
 const slice = (rows, { limit, offset }) => rows.slice(offset, offset + limit);
 
-module.exports = { r2, referralCode, token, txnRef, toMpesaFormat, isValidKenyanPhone, wrap, clientIp, page, slice };
+module.exports = {
+  r2, referralCode, token, txnRef, toMpesaFormat, isValidKenyanPhone,
+  displayKenyanPhone, maskPhone, wrap, clientIp, page, slice,
+};

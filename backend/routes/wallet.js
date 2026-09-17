@@ -1,230 +1,421 @@
+/**
+ * Wallet routes (sections 08 – 13, 27, 28).
+ *
+ * Rules enforced here:
+ *   - balances are read from the server-side ledger, never from the client;
+ *   - a deposit is Pending until a verified provider result says otherwise —
+ *     pressing Continue never produces a "Successful" screen;
+ *   - a withdrawal reserves the amount immediately (no double withdrawal) and
+ *     stays Pending until the provider confirms the payout;
+ *   - every operation writes an immutable ledger entry with an idempotency key.
+ */
 const express = require('express');
 const { Table } = require('../db');
 const config = require('../config');
-const { wrap, r2, toMpesaFormat, isValidKenyanPhone } = require('../lib/helpers');
+const { wrap, r2, txnRef, toMpesaFormat, isValidKenyanPhone } = require('../lib/helpers');
 const { formatMoney } = require('../lib/money');
-const { depositMethods, withdrawalMethods, isMpesaCountry } = require('../lib/countries');
 const { requireAuth } = require('../middleware/auth');
-const { stkPush, demoCallbackBody } = require('../services/mpesa');
-const { notify } = require('../services/earnings');
+const ledger = require('../services/ledger');
+const payments = require('../services/payments');
+const settings = require('../services/settings');
+const notify = require('../services/notify');
 const ws = require('../lib/ws');
 
 const router = express.Router();
 const users = new Table('users');
 const deposits = new Table('deposits');
 const withdrawals = new Table('withdrawals');
-const packages = new Table('packages');
-const promos = new Table('promo_codes');
-const promoRedemptions = new Table('promo_redemptions');
-const notifications = new Table('notifications');
 
-// ── Deposit methods available to the current user ────────
-router.get('/deposit-methods', requireAuth, wrap(async (req, res) => {
+const STATUS_LABEL = {
+  pending: 'Pending',
+  successful: 'Successful',
+  failed: 'Failed',
+  processing: 'Processing',
+  completed: 'Completed',
+  PENDING: 'Pending',
+  COMPLETED: 'Completed',
+  FAILED: 'Failed',
+  REVERSED: 'Reversed',
+};
+
+const label = (s) => STATUS_LABEL[s] || s;
+
+// ── Wallet summary (section 08) ──────────────────────────────
+router.get('/summary', requireAuth, wrap(async (req, res) => {
   const user = await users.byId(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  const totals = await ledger.totals(user.id);
   res.json({
-    country_code: user.country_code || null,
-    currency_code: user.currency_code || null,
-    methods: depositMethods(user.country_code),
+    ...totals,
+    currency_code: totals.currency_code || config.wallet.currency,
+    wallet_balance_source: 'server-ledger',
   });
 }));
 
-// ── Withdrawal methods available to the current user ─────
-router.get('/withdraw-methods', requireAuth, wrap(async (req, res) => {
-  const user = await users.byId(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+// ── Configurable limits shown on the deposit / withdraw screens ──
+router.get('/config', requireAuth, wrap(async (_req, res) => {
+  const s = await settings.publicConfig();
   res.json({
-    country_code: user.country_code || null,
-    currency_code: user.currency_code || null,
-    methods: withdrawalMethods(user.country_code),
+    currency_code: s.currency_code,
+    min_deposit: s.min_deposit,
+    max_deposit: s.max_deposit,
+    min_withdrawal: s.min_withdrawal,
+    withdrawal_fee_pct: s.withdrawal_fee_pct,
+    expected_processing: s.expected_processing,
+    payment_provider: s.payment_provider,
   });
 }));
 
-// ── Deposits ──────────────────────────────────────────────
+// ── Transaction history (sections 08, 13) ────────────────────
+router.get('/transactions', requireAuth, wrap(async (req, res) => {
+  const filter = ['all', 'deposits', 'earnings', 'withdrawals'].includes(String(req.query.filter))
+    ? String(req.query.filter) : 'all';
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  const { rows, total } = await ledger.history(req.user.id, { filter, limit, offset });
+  res.json({
+    filter,
+    total,
+    limit,
+    offset,
+    has_more: offset + rows.length < total,
+    transactions: rows.map((r) => ({
+      txn_id: r.txn_id,
+      type: r.type,
+      status: r.status,
+      status_label: label(r.status),
+      direction: ledger.isCredit(r.type) ? 'in' : 'out',
+      amount: r2(r.amount),
+      currency_code: r.currency_code,
+      description: r.description,
+      reference: r.reference,
+      created_at: r.created_at,
+      balance_after: r.balance_after != null ? r2(r.balance_after) : null,
+    })),
+  });
+}));
+
+// ── Deposits (section 09) ────────────────────────────────────
 router.post('/deposit', requireAuth, wrap(async (req, res) => {
   const user = await users.byId(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  // M-Pesa (Daraja) is implemented for Kenyan accounts only.
-  if (!isMpesaCountry(user.country_code)) {
-    return res.status(403).json({ error: 'M-Pesa deposits are currently available in Kenya only' });
+  if (user.status === 'suspended') return res.status(403).json({ error: 'Account suspended' });
+
+  const s = await settings.publicConfig();
+  const amount = r2(req.body.amount);
+  const phone = toMpesaFormat(req.body.phone || user.phone);
+
+  if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid deposit amount' });
+  if (amount < Number(s.min_deposit)) return res.status(400).json({ error: `Minimum deposit is ${formatMoney(s.min_deposit, s.currency_code, 0)}` });
+  if (amount > Number(s.max_deposit)) return res.status(400).json({ error: `Maximum deposit is ${formatMoney(s.max_deposit, s.currency_code, 0)}` });
+  if (!isValidKenyanPhone(phone)) return res.status(400).json({ error: 'Enter a valid M-Pesa number (07XXXXXXXX)' });
+
+  // Duplicate-submit protection: the same form submission can never open two
+  // pending deposits (and therefore can never send two STK pushes).
+  const clientKey = req.body.idempotency_key ? String(req.body.idempotency_key).slice(0, 120) : null;
+  if (clientKey) {
+    const existing = await deposits.get({ idempotency_key: clientKey });
+    if (existing) {
+      return res.status(200).json({ ok: true, duplicate: true, deposit: shapeDeposit(existing) });
+    }
   }
 
-  const { amount, phone } = req.body || {};
-  const amt = r2(Number(amount));
-  if (!amt || amt < config.wallet.minDeposit) return res.status(400).json({ error: `Minimum deposit is ${formatMoney(config.wallet.minDeposit, user.currency_code, 0)}` });
-  if (amt > 150000) return res.status(400).json({ error: `Maximum deposit is ${formatMoney(150000, user.currency_code, 0)}` });
-  if (!isValidKenyanPhone(phone)) return res.status(400).json({ error: 'Enter a valid M-Pesa number (07XX… or 2547XX…)' });
-
-  const mpesaPhone = toMpesaFormat(phone);
   const deposit = await deposits.create({
-    user_id: req.user.id,
-    amount: amt,
-    currency_code: user.currency_code || 'KES',
+    txn_id: txnRef('WR-'),
+    user_id: Number(user.id),
+    amount,
+    currency_code: s.currency_code,
     payment_method: 'mpesa',
-    phone: mpesaPhone,
+    phone,
     status: 'pending',
+    idempotency_key: clientKey || `deposit:${user.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
   });
 
   try {
-    const { providerRef, demo } = await stkPush({ phone: mpesaPhone, amount: amt, accountRef: 'TaskCash' });
-    await deposits.update(deposit.id, { provider_ref: providerRef });
-
-    if (demo) {
-      // Demo mode: simulate Daraja callback shortly after
-      setTimeout(async () => {
-        try {
-          await require('../services/mpesa-webhook').processCallback(demoCallbackBody(deposit));
-          console.log(`[mpesa:demo] deposit #${deposit.id} auto-approved`);
-        } catch (e) { console.warn('[mpesa:demo] failed:', e.message); }
-      }, 8000).unref?.();
-    }
-
-    res.json({
+    const started = await payments.startDeposit({ user, deposit, phone, amount });
+    await ledger.audit({
+      action: 'deposit.created',
+      targetType: 'deposit',
+      targetId: deposit.txn_id,
+      detail: `amount=${amount} provider=${started.provider} sandbox=${started.sandbox}`,
+    });
+    res.status(202).json({
       ok: true,
-      deposit_id: deposit.id,
-      status: demo ? 'processing-demo' : 'processing',
-      demo,
-      message: demo
-        ? 'Demo mode: no M-Pesa keys configured — the deposit auto-confirms in ~8s.'
-        : 'Check your phone and enter your M-Pesa PIN to complete the payment.',
+      deposit: shapeDeposit(started.deposit),
+      status_label: label('pending'),
+      sandbox: started.sandbox,
+      message: started.message,
     });
   } catch (e) {
-    await deposits.update(deposit.id, { status: 'rejected', failure_reason: String(e.message).slice(0, 300) });
-    res.status(502).json({ error: `M-Pesa request failed: ${e.message}` });
+    await deposits.update(deposit.id, {
+      status: 'failed',
+      failure_reason: String(e.message).slice(0, 300),
+      updated_at: new Date().toISOString(),
+    });
+    await ledger.record({
+      userId: user.id,
+      type: 'DEPOSIT',
+      amount,
+      status: 'FAILED',
+      description: 'Deposit could not be initiated',
+      reference: deposit.txn_id,
+      idempotencyKey: `deposit-failed:${deposit.txn_id}`,
+      metadata: { reason: String(e.message).slice(0, 200) },
+    });
+    res.status(e.status || 502).json({ error: e.message });
   }
 }));
 
-// Deposit status polling
-router.get('/deposit/:id', requireAuth, wrap(async (req, res) => {
-  const d = await deposits.byId(req.params.id);
-  if (!d || d.user_id !== req.user.id) return res.status(404).json({ error: 'Deposit not found' });
-  res.json({ deposit: { id: d.id, amount: r2(d.amount), status: d.status, reference: d.provider_ref, created_at: d.created_at } });
+// Deposit status (section 10). `?verify=1` asks the provider for the
+// authoritative state instead of only reading our own row.
+router.get('/deposits/:id', requireAuth, wrap(async (req, res) => {
+  const deposit = await findDeposit(req.params.id, req.user.id);
+  if (!deposit) return res.status(404).json({ error: 'Deposit not found' });
+
+  let current = deposit;
+  let detail = null;
+  let providerPending = false;
+  if (String(req.query.verify) === '1' && deposit.status === 'pending') {
+    try {
+      const out = await payments.refreshDeposit(deposit);
+      current = out.deposit;
+      detail = out.detail;
+      providerPending = Boolean(out.pending);
+      if (out.status === 'successful') {
+        await notify.push(req.user.id, { title: 'Deposit Successful', message: `${formatMoney(current.amount)} has been added to your wallet.`, type: 'success', link: '#/wallet' });
+      }
+    } catch (e) {
+      detail = e.message;
+      providerPending = true;
+    }
+  }
+
+  res.json({
+    deposit: shapeDeposit(current),
+    provider_pending: providerPending,
+    detail,
+    // Never label a payment as successful unless the provider confirmed it.
+    is_successful: current.status === 'successful',
+    is_failed: current.status === 'failed',
+  });
 }));
 
-router.get('/deposits', requireAuth, wrap(async (req, res) => {
-  const rows = await deposits.all({ where: { user_id: req.user.id }, orderBy: 'created_at DESC', limit: 50 });
-  res.json({ deposits: rows.map((d) => ({ ...d, amount: r2(d.amount) })) });
+// ── Withdrawals (sections 11, 12) ────────────────────────────
+router.post('/withdraw/quote', requireAuth, wrap(async (req, res) => {
+  const user = await users.byId(req.user.id);
+  const s = await settings.publicConfig();
+  const amount = r2(req.body.amount);
+  const fee = r2((amount || 0) * (Number(s.withdrawal_fee_pct) / 100));
+  const net = r2(Math.max(0, (amount || 0) - fee));
+  const available = r2(user ? user.balance : 0);
+
+  const errors = [];
+  if (!(amount > 0)) errors.push('Enter a withdrawal amount');
+  if (amount > 0 && amount < Number(s.min_withdrawal)) errors.push(`Minimum withdrawal is ${formatMoney(s.min_withdrawal, s.currency_code, 0)}`);
+  if (amount > available) errors.push('Amount exceeds your available balance');
+
+  res.json({
+    amount,
+    fee,
+    net_amount: net,
+    fee_pct: r2(s.withdrawal_fee_pct),
+    currency_code: s.currency_code,
+    min_withdrawal: r2(s.min_withdrawal),
+    expected_processing: s.expected_processing,
+    available,
+    valid: errors.length === 0,
+    errors,
+    message: 'You will receive the amount shown after the processing fee is deducted.',
+  });
 }));
 
-// ── Withdrawals ───────────────────────────────────────────
 router.post('/withdraw', requireAuth, wrap(async (req, res) => {
   const user = await users.byId(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (user.status === 'suspended') return res.status(403).json({ error: 'Account suspended' });
-  if (user.kyc_status !== 'verified') {
-    return res.status(403).json({ error: 'Account verification (KYC) required before withdrawals. Visit Settings → Verify account.' });
+
+  const s = await settings.publicConfig();
+  const amount = r2(req.body.amount);
+  const phone = toMpesaFormat(req.body.phone || user.payout_phone || user.phone);
+
+  if (!(amount > 0)) return res.status(400).json({ error: 'Enter a valid withdrawal amount' });
+  if (amount < Number(s.min_withdrawal)) {
+    return res.status(400).json({ error: `Minimum withdrawal is ${formatMoney(s.min_withdrawal, s.currency_code, 0)}` });
+  }
+  if (!isValidKenyanPhone(phone)) return res.status(400).json({ error: 'Enter a valid M-Pesa phone number (07XXXXXXXX)' });
+  if (r2(user.balance) < amount) return res.status(400).json({ error: 'Insufficient balance for this withdrawal' });
+
+  const clientKey = req.body.idempotency_key ? String(req.body.idempotency_key).slice(0, 120) : null;
+  if (clientKey) {
+    const existing = await withdrawals.get({ idempotency_key: clientKey });
+    if (existing) return res.status(200).json({ ok: true, duplicate: true, withdrawal: shapeWithdrawal(existing) });
   }
 
-  const { amount, method, destination } = req.body || {};
-  const amt = r2(Number(amount));
-  const cur = user.currency_code || 'KES';
-  // Only payout methods actually implemented for this user's country.
-  const available = withdrawalMethods(user.country_code).filter((m) => m.implemented).map((m) => m.id);
-  if (!available.includes(String(method || ''))) {
-    return res.status(400).json({ error: 'That payout method is not available in your country yet' });
-  }
-  if (!amt || amt < config.wallet.minWithdrawal) {
-    return res.status(400).json({ error: `Minimum withdrawal is ${formatMoney(config.wallet.minWithdrawal, cur, 0)}` });
-  }
-  if (amt > Number(user.balance)) return res.status(400).json({ error: 'Amount exceeds available balance' });
+  const fee = r2(amount * (Number(s.withdrawal_fee_pct) / 100));
+  const net = r2(amount - fee);
+  const requestId = txnRef('WRW-');
 
-  const fee = r2(amt * config.wallet.withdrawalFeePct / 100);
-  const net = r2(amt - fee);
-
-  // Daily limit check
-  const db = require('../db').getDb();
-  const todayRows = await withdrawals.all({ where: { user_id: user.id }, limit: 200 });
-  const today = new Date().toISOString().slice(0, 10);
-  const todaySum = todayRows
-    .filter((w) => String(w.created_at).slice(0, 10) === today && w.status !== 'rejected')
-    .reduce((s, w) => s + Number(w.amount), 0);
-  if (todaySum + amt > config.wallet.withdrawalDailyLimit) {
-    return res.status(429).json({ error: `Daily withdrawal limit is ${formatMoney(config.wallet.withdrawalDailyLimit, cur, 0)}` });
-  }
-
-  let dest = String(destination || '').trim();
-  if (method === 'mpesa') {
-    if (!isValidKenyanPhone(dest)) return res.status(400).json({ error: 'Enter a valid M-Pesa number' });
-    dest = toMpesaFormat(dest);
-  } else if (method === 'bank') {
-    if (!/^[A-Za-z0-9 /-]{6,40}$/.test(dest)) return res.status(400).json({ error: 'Enter a valid bank account number' });
-  } else {
-    return res.status(400).json({ error: 'Unsupported method' });
-  }
-
-  // Hold funds + create pending withdrawal
-  await users.adjust(user.id, 'balance', -amt);
-  await users.adjust(user.id, 'pending_balance', amt);
-  const wd = await withdrawals.create({
-    user_id: user.id, amount: amt, fee, net_amount: net,
-    currency_code: cur,
-    method, destination: dest, status: 'pending',
+  // The request row is written first, then the amount is reserved: the funds
+  // leave the available balance immediately, so the same money can never be
+  // requested twice while the payout is pending.
+  const withdrawal = await withdrawals.create({
+    request_id: requestId,
+    user_id: Number(user.id),
+    amount,
+    fee,
+    net_amount: net,
+    currency_code: s.currency_code,
+    method: 'mpesa',
+    destination: phone,
+    status: 'pending',
+    idempotency_key: clientKey || `withdrawal-request:${requestId}`,
   });
 
-  await notify(user.id, 'Withdrawal requested', `${formatMoney(amt, cur)} (net ${formatMoney(net, cur)} after fee) is pending admin approval.`, 'info');
-  ws.broadcastAdmins({ type: 'admin_alert', payload: { kind: 'withdrawal', id: wd.id } });
+  let reservation;
+  try {
+    reservation = await ledger.reserve({
+      userId: user.id,
+      type: 'WITHDRAWAL',
+      amount,
+      description: `Withdrawal to ${maskPhone(phone)}`,
+      reference: requestId,
+      idempotencyKey: `withdrawal:${requestId}`,
+      metadata: { request_id: requestId, fee, net, destination: phone },
+    });
+  } catch (e) {
+    await withdrawals.update(withdrawal.id, {
+      status: 'failed',
+      failure_reason: String(e.message).slice(0, 300),
+      updated_at: new Date().toISOString(),
+    });
+    return res.status(e.status || 400).json({ error: e.message });
+  }
 
-  res.json({
-    ok: true, withdrawal: wd,
-    message: 'Withdrawal requested. Funds on hold until approval (usually within 24h).',
+  let providerMessage = null;
+  let sandbox = false;
+  try {
+    const started = await payments.startWithdrawal({ user, withdrawal, phone, amount: net });
+    providerMessage = started.message;
+    sandbox = started.sandbox;
+  } catch (e) {
+    // The provider refused the payout: release the reservation immediately.
+    await payments.applyWithdrawalResult(withdrawal, { result: 'FAILED', detail: e.message });
+    await ledger.audit({
+      actorId: user.id,
+      actorRole: 'user',
+      action: 'withdrawal.provider_rejected',
+      targetType: 'withdrawal',
+      targetId: requestId,
+      detail: String(e.message).slice(0, 300),
+    });
+    return res.status(e.status || 502).json({ error: e.message });
+  }
+
+  await ledger.audit({
+    actorId: user.id,
+    actorRole: 'user',
+    action: 'withdrawal.requested',
+    targetType: 'withdrawal',
+    targetId: requestId,
+    detail: `amount=${amount} fee=${fee} net=${net}`,
+  });
+  await notify.push(user.id, {
+    title: 'Withdrawal Pending',
+    message: `Request ${requestId} for ${formatMoney(net)} is being processed. Status stays Pending until M-Pesa confirms the payout.`,
+    type: 'info',
+    link: '#/transactions',
+  });
+  ws.broadcastAdmins({ type: 'admin_alert', payload: { kind: 'withdrawal', id: withdrawal.id, request_id: requestId, amount } });
+
+  const fresh = await withdrawals.byId(withdrawal.id);
+  res.status(202).json({
+    ok: true,
+    withdrawal: shapeWithdrawal(fresh || withdrawal),
+    reserved_from: reservation.transaction.txn_id,
+    balance: reservation.balance,
+    sandbox,
+    message: providerMessage || 'Withdrawal request submitted. Status will stay Pending until the payout is verified.',
   });
 }));
 
 router.get('/withdrawals', requireAuth, wrap(async (req, res) => {
-  const rows = await withdrawals.all({ where: { user_id: req.user.id }, orderBy: 'created_at DESC', limit: 50 });
-  res.json({ withdrawals: rows.map((w) => ({ ...w, amount: r2(w.amount), fee: r2(w.fee), net_amount: r2(w.net_amount) })) });
+  const rows = await withdrawals.all({ where: { user_id: Number(req.user.id) }, orderBy: 'created_at DESC', limit: 50 });
+  res.json({ withdrawals: rows.map(shapeWithdrawal) });
 }));
 
-router.get('/deposits', requireAuth, wrap(async (req, res) => {
-  const rows = await deposits.all({ where: { user_id: req.user.id }, orderBy: 'created_at DESC', limit: 50 });
-  res.json({ deposits: rows.map((d) => ({ ...d, amount: r2(d.amount) })) });
+router.get('/withdrawals/:id', requireAuth, wrap(async (req, res) => {
+  const withdrawal = await findWithdrawal(req.params.id, req.user.id);
+  if (!withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });
+  res.json({ withdrawal: shapeWithdrawal(withdrawal) });
 }));
 
-// ── Packages ──────────────────────────────────────────────
-router.get('/packages', wrap(async (_req, res) => {
-  const rows = await packages.all({ where: { is_active: true }, orderBy: 'price ASC' });
-  res.json({ packages: rows.map((p) => ({ ...p, price: r2(p.price), benefits: p.benefits })) });
-}));
+// ── Helpers ─────────────────────────────────────────────────
+function maskPhone(phone) {
+  const d = String(phone || '');
+  if (d.length < 6) return '07******XX';
+  return `${d.slice(0, 2)}******${d.slice(-2)}`;
+}
 
-router.post('/packages/:id/purchase', requireAuth, wrap(async (req, res) => {
-  const pkg = await packages.byId(req.params.id);
-  if (!pkg || !pkg.is_active) return res.status(404).json({ error: 'Package not available' });
+function shapeDeposit(d) {
+  return {
+    id: d.id,
+    txn_id: d.txn_id,
+    amount: r2(d.amount),
+    currency_code: d.currency_code || config.wallet.currency,
+    phone: maskPhone(d.phone),
+    status: d.status,
+    status_label: label(d.status),
+    // Only a verified provider reference is ever exposed.
+    payment_reference: d.payment_reference || null,
+    provider_ref: d.payment_reference ? d.provider_ref || null : null,
+    failure_reason: d.status === 'failed' ? d.failure_reason || null : null,
+    verified: Boolean(d.verified_at),
+    created_at: d.created_at,
+    updated_at: d.updated_at || d.created_at,
+  };
+}
 
-  const user = await users.byId(req.user.id);
-  if (Number(user.balance) < Number(pkg.price)) {
-    return res.status(400).json({ error: `Insufficient balance. This package costs ${formatMoney(r2(pkg.price), user.currency_code)}.` });
-  }
+function shapeWithdrawal(w) {
+  return {
+    id: w.id,
+    request_id: w.request_id,
+    amount: r2(w.amount),
+    fee: r2(w.fee),
+    net_amount: r2(w.net_amount),
+    currency_code: w.currency_code || config.wallet.currency,
+    destination: maskPhone(w.destination),
+    method: w.method,
+    status: w.status,
+    status_label: label(w.status),
+    receipt: w.receipt || null,
+    failure_reason: w.status === 'failed' ? w.failure_reason || null : null,
+    verified: Boolean(w.verified_at),
+    created_at: w.created_at,
+    updated_at: w.updated_at || w.created_at,
+  };
+}
 
-  const expires = new Date(Date.now() + pkg.duration_days * 86400000).toISOString();
-  await users.adjust(user.id, 'balance', -Number(pkg.price));
-  await users.update(user.id, { package_id: pkg.id, package_expires: expires });
-  await notify(user.id, `${pkg.name} package active 🚀`, `Daily task cap is now ${pkg.daily_tasks}. Expires ${expires.slice(0, 10)}.`, 'success');
+async function findDeposit(idOrTxn, userId) {
+  const numeric = Number(idOrTxn);
+  const row = Number.isFinite(numeric) && String(numeric) === String(idOrTxn)
+    ? await deposits.byId(numeric)
+    : await deposits.get({ txn_id: String(idOrTxn) });
+  if (!row || Number(row.user_id) !== Number(userId)) return null;
+  return row;
+}
 
-  res.json({ ok: true, package: pkg, expires, message: `${pkg.name} package activated!` });
-}));
-
-// ── Promo codes ───────────────────────────────────────────
-router.post('/promo/redeem', requireAuth, wrap(async (req, res) => {
-  const code = String(req.body.code || '').trim().toUpperCase();
-  if (!code) return res.status(400).json({ error: 'Enter a promo code' });
-
-  const promo = await promos.get({ code, is_active: true });
-  if (!promo) return res.status(404).json({ error: 'Invalid or expired promo code' });
-  if (promo.expires_at && new Date(promo.expires_at) < new Date()) return res.status(400).json({ error: 'This promo code has expired' });
-  if (promo.used_count >= promo.max_uses) return res.status(400).json({ error: 'This promo code has reached its limit' });
-  if (await promoRedemptions.get({ code_id: promo.id, user_id: req.user.id })) {
-    return res.status(409).json({ error: 'You already redeemed this code' });
-  }
-
-  const me = await users.byId(req.user.id);
-  const cur = me ? me.currency_code : 'KES';
-  await promoRedemptions.create({ code_id: promo.id, user_id: req.user.id });
-  await promos.adjust(promo.id, 'used_count', 1);
-  await users.adjust(req.user.id, 'balance', promo.amount);
-  await users.adjust(req.user.id, 'total_earned', promo.amount);
-  await notify(req.user.id, 'Promo code redeemed 🎁', `${code}: ${formatMoney(r2(promo.amount), cur)} credited to your balance.`, 'success');
-
-  res.json({ ok: true, amount: r2(promo.amount), currency_code: cur, message: `${formatMoney(r2(promo.amount), cur)} added via ${code}!` });
-}));
+async function findWithdrawal(idOrRequest, userId) {
+  const numeric = Number(idOrRequest);
+  const row = Number.isFinite(numeric) && String(numeric) === String(idOrRequest)
+    ? await withdrawals.byId(numeric)
+    : await withdrawals.get({ request_id: String(idOrRequest) });
+  if (!row || Number(row.user_id) !== Number(userId)) return null;
+  return row;
+}
 
 module.exports = router;
+module.exports.shapeDeposit = shapeDeposit;
+module.exports.shapeWithdrawal = shapeWithdrawal;
+module.exports.maskPhone = maskPhone;
+module.exports.label = label;

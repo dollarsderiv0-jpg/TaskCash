@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: taskcash-kenya
+    name: watchrewards
     runtime: node
     plan: starter
     buildCommand: npm ci && npm run seed
     startCommand: npm start
-    healthCheckPath: /api/feed
+    healthCheckPath: /api/public/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -18,11 +18,19 @@ services:
       - key: CSRF_SECRET
         generateValue: true
       - key: APP_URL
-        sync: false      # e.g. https://taskcash-kenya.onrender.com
+        sync: false      # e.g. https://watchrewards.onrender.com
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      # Live payments: set these or deposits and payouts stay unavailable
+      # (the sandbox provider is refused in production).
+      - key: PAYMENT_PROVIDER
+        value: mpesa
+      - key: PAYMENT_MODE
+        value: live
+      - key: MPESA_ENV
+        value: production
       - key: MPESA_APP_KEY
         sync: false
       - key: MPESA_APP_SECRET
@@ -32,4 +40,11 @@ services:
       - key: MPESA_PASSKEY
         sync: false
       - key: MPESA_CALLBACK_URL
+        sync: false
+      # Payouts (B2C) — required before withdrawals can be sent automatically
+      - key: MPESA_B2C_SHORTCODE
+        sync: false
+      - key: MPESA_B2C_INITIATOR
+        sync: false
+      - key: MPESA_B2C_SECURITY_CREDENTIAL
         sync: false

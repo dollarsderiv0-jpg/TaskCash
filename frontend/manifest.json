@@ -1,20 +1,22 @@
 {
-  "name": "TaskCash",
-  "short_name": "TaskCash",
-  "description": "Earn rewards by completing tasks, referrals and sponsored activities. Paid out in your local currency.",
-  "start_url": "/dashboard.html",
+  "name": "WATCHREWARDS",
+  "short_name": "WATCHREWARDS",
+  "description": "Watch eligible videos, earn verified rewards and withdraw to M-Pesa.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#05080a",
-  "theme_color": "#39ff14",
+  "orientation": "portrait",
+  "background_color": "#F7F7FA",
+  "theme_color": "#5421A6",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%2305080a'/%3E%3Ctext x='96' y='126' font-family='Arial' font-size='84' font-weight='bold' fill='%2339ff14' text-anchor='middle'%3E₭%3C/text%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%235421A6'/%3E%3Cpath d='M74 58l60 38-60 38z' fill='%23ffffff'/%3E%3C/svg%3E",
       "sizes": "192x192",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%2305080a'/%3E%3Ctext x='256' y='336' font-family='Arial' font-size='224' font-weight='bold' fill='%2339ff14' text-anchor='middle'%3E₭%3C/text%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%235421A6'/%3E%3Cpath d='M198 154l160 102-160 102z' fill='%23ffffff'/%3E%3C/svg%3E",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
