@@ -30,6 +30,9 @@
  *   node scripts/vercel-env-sync.mjs --url https://example.com --target preview
  *   node scripts/vercel-env-sync.mjs --url https://example.com --generate-cron-secret
  *
+ * Changing the payment provider requires `--provider=<name>`, and is announced
+ * on stdout, because it is the one variable here that reroutes money.
+ *
  * Requires the project to be linked (`vercel link`).
  */
 
@@ -43,16 +46,25 @@ const ENV_FILE = resolve(ROOT, ".env.local");
 
 /** Values identical in every environment, taken from this repository's own code. */
 const CONSTANTS = {
-  // PayHero is the active provider. The M-Pesa variables below are still pushed
-  // so that switching back is a one-variable change, but nothing routes to them
-  // while PAYMENTS_PROVIDER names payhero.
-  PAYMENTS_PROVIDER: "payhero",
+  /*
+    NOTE: PAYMENTS_PROVIDER is deliberately NOT in this map.
+
+    It used to be a hardcoded "payhero". That made every sync run an unannounced
+    provider switch: a routine `deploy:env` would move a live deployment from
+    M-Pesa to PayHero as a side effect of pushing unrelated variables — and with
+    no M-Pesa credentials set, that turned working-ish deposits into
+    fail-closed ones. Which provider collects money is a decision about money
+    routing, so it is now opt-in and announced; see --provider below.
+  */
   MPESA_ENV: "production",
   MPESA_TRANSACTION_TYPE: "CustomerPayBillOnline",
   // The Daraja production host. mpesa/config.ts treats this as an assertion that
   // must agree with MPESA_ENV, and refuses Safaricom's sandbox host in production.
   MPESA_BASE_URL: "https://api.safaricom.co.ke",
 };
+
+/** The providers the application accepts (`activePaymentProvider` in src/lib/env.ts). */
+const PAYMENT_PROVIDERS = ["mpesa", "sasapay", "payhero"];
 
 /** Copied from .env.local when present — these are server-side or public-by-design. */
 const PASSTHROUGH = [
@@ -108,17 +120,24 @@ const SECRET_TYPE = new Set([
 ]);
 
 function parseArgs(argv) {
-  const args = { target: "production", url: null, cron: false, dryRun: false };
+  const args = { target: "production", url: null, cron: false, dryRun: false, provider: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--target") args.target = argv[++i];
     else if (arg === "--url") args.url = argv[++i];
+    else if (arg === "--provider") args.provider = argv[++i];
+    else if (arg.startsWith("--provider=")) args.provider = arg.slice("--provider=".length);
     else if (arg === "--generate-cron-secret") args.cron = true;
     else if (arg === "--dry-run") args.dryRun = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!["production", "preview", "development"].includes(args.target)) {
     throw new Error(`--target must be production, preview or development (got ${args.target})`);
+  }
+  if (args.provider !== null && !PAYMENT_PROVIDERS.includes(args.provider)) {
+    throw new Error(
+      `--provider must be one of ${PAYMENT_PROVIDERS.join(", ")} (got ${args.provider})`,
+    );
   }
   return args;
 }
@@ -195,6 +214,28 @@ function main() {
     console.log("Generated CRON_SECRET (value not printed; appended to .env.local)");
   } else {
     console.log("CRON_SECRET absent — skip with --generate-cron-secret, or the reconcile cron 401s.");
+  }
+
+  /*
+    The provider is opt-in. Without the flag this script does not touch
+    PAYMENTS_PROVIDER, so the deployment's existing value survives a sync — and
+    importantly, so does the *absence* of one, whose fallback in
+    `activePaymentProvider()` is to prefer PayHero whenever PayHero collection
+    credentials are present. Leaving the variable alone is therefore not the
+    same as leaving the routing alone, which is exactly why the flag announces
+    what it is about to do.
+  */
+  if (args.provider) {
+    plan.set("PAYMENTS_PROVIDER", args.provider);
+    console.log(
+      `\n\u26a0  --provider=${args.provider}: this WILL route payments to ${args.provider.toUpperCase()}.`,
+    );
+    console.log("   Redeploy after this, then verify /api/health reports the new provider.");
+  } else {
+    console.log(
+      "\nPAYMENTS_PROVIDER is NOT being set — the deployment keeps its current value." +
+        " Pass --provider=<name> to change it deliberately.",
+    );
   }
 
   const skipped = PASSTHROUGH.filter((name) => !env.get(name));

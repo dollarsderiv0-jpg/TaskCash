@@ -31,19 +31,46 @@ export type CallbackAuthenticity = {
 /** The prefix our own payout references carry. Mirrors withdrawals.ts. */
 const DISBURSEMENT_REFERENCE_PREFIX = "TCW-";
 
+/**
+ * Unwraps PayHero's callback envelope.
+ *
+ * PayHero does not deliver the flat object this module originally expected. The
+ * real transaction fields live under `response`, while the top level carries an
+ * envelope `status` that is an acknowledgement boolean (`true`) rather than the
+ * transaction's own `Status`.
+ *
+ * Reading only the top level is not a harmless miss: every field comes back
+ * absent, so the reference is null, the deposit lookup filters on nothing, and a
+ * payment that actually succeeded is filed as PAYMENT_NOT_CREDITED.
+ *
+ * Nested values win over the envelope's, so the envelope's `status: true` can
+ * never be mistaken for the transaction outcome. A payload with no `response`
+ * object (the flat shape, and every other provider's) is returned untouched.
+ */
+export function unwrapCallbackEnvelope(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const nested = payload.response;
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) return payload;
+  return { ...payload, ...(nested as Record<string, unknown>) };
+}
+
 /** Normalises a PayHero callback body. */
 export function normalizeCallback(
   payload: Record<string, unknown>,
   hint: "COLLECTION" | "DISBURSEMENT" | null = null,
 ): NormalizedCallback {
-  const external = pickString(payload, [
+  // Read the transaction fields, whether they arrived flat or under `response`.
+  const fields = unwrapCallbackEnvelope(payload);
+
+  const external = pickString(fields, [
     "external_reference",
     "ExternalReference",
     "account_reference",
     "AccountReference",
   ]);
 
-  const channel = pickString(payload, ["channel", "Channel", "type", "Type"])?.toLowerCase();
+  const channel = pickString(fields, ["channel", "Channel", "type", "Type"])?.toLowerCase();
   const direction: "COLLECTION" | "DISBURSEMENT" =
     hint ??
     (channel === "withdraw" || channel === "disbursement" || channel === "b2c"
@@ -52,9 +79,9 @@ export function normalizeCallback(
         ? "DISBURSEMENT"
         : "COLLECTION");
 
-  const status = pickString(payload, ["status", "Status", "transaction_status"]);
-  const resultCode = pickString(payload, ["ResultCode", "ResponseCode", "result_code"]);
-  const description = pickString(payload, [
+  const status = pickString(fields, ["status", "Status", "transaction_status"]);
+  const resultCode = pickString(fields, ["ResultCode", "ResponseCode", "result_code"]);
+  const description = pickString(fields, [
     "ResultDesc",
     "message",
     "detail",
@@ -66,7 +93,7 @@ export function normalizeCallback(
 
   return {
     direction,
-    providerTransactionId: pickString(payload, [
+    providerTransactionId: pickString(fields, [
       "MpesaReceiptNumber",
       "transaction_code",
       "TransactionCode",
@@ -74,10 +101,11 @@ export function normalizeCallback(
       "provider_transaction_id",
     ]),
     merchantReference: external,
-    checkoutRequestId: pickString(payload, ["reference", "Reference", "CheckoutRequestID", "MerchantRequestID"]),
-    amount: pickNumber(payload, ["amount", "Amount", "TransactionAmount", "TransAmount"]),
-    currency: pickString(payload, ["currency", "Currency"]) ?? "KES",
-    phone: pickString(payload, ["phone_number", "PhoneNumber", "MSISDN", "customer_mobile"]),
+    checkoutRequestId: pickString(fields, ["reference", "Reference", "CheckoutRequestID", "MerchantRequestID"]),
+    amount: pickNumber(fields, ["amount", "Amount", "TransactionAmount", "TransAmount"]),
+    currency: pickString(fields, ["currency", "Currency"]) ?? "KES",
+    // `Phone` is how PayHero spells it inside the callback envelope.
+    phone: pickString(fields, ["phone_number", "PhoneNumber", "MSISDN", "customer_mobile", "Phone"]),
     outcome,
     resultCode: resultCode ?? status,
     resultDescription: description,

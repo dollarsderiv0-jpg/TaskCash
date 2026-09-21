@@ -41,6 +41,11 @@ yarn-error.log*
 # accounts. Excluded deliberately — several probe scripts carry a test account's
 # password as a fallback, and git history is forever. Nothing here is needed to
 # build or run the application.
+#
+# NOTE: editing anything under .freebuff/ needs this line lifted first — the file
+# tools respect .gitignore, so a `.freebuff/` entry makes the run doc invisible to
+# them. Lift it, make the edit, put it back. Never leave it lifted: `git add -A`
+# would then stage the probe scripts and demo-account.json.
 .freebuff/
 
 .vercel
