@@ -1,0 +1,24 @@
+# Files the Vercel CLI must never upload.
+#
+# .env.local is the dangerous one: it holds APP_URL=http://localhost:4177, and
+# the run doc records that APP_URL is what password-reset and confirmation links
+# are built from. If it were uploaded, a deployment could resolve its own links
+# back to localhost. Production configuration comes from the Vercel project's
+# environment variables instead — never from a file in this directory.
+.env
+.env.*
+!.env.example
+
+# Build output and dependencies are rebuilt in the cloud; uploading them only
+# risks shipping a stale build or a localhost-compiled artifact.
+.next
+node_modules
+
+# Local logs and probe output.
+*.log
+*.log.err
+
+# Local development tooling: probe scripts, the run doc, and test accounts.
+# Nothing here is needed to build or run the application, and it has no business
+# travelling inside a deployment's source.
+.freebuff

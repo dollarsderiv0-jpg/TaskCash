@@ -1,0 +1,89 @@
+<!--
+  TaskCash Pro — password reset.
+  Applied to the Supabase project by `npm run smtp:configure` (field:
+  mailer_templates_recovery_content). Supabase substitutes {{ .ConfirmationURL }}
+  and {{ .Email }}.
+
+  Deliberately understated: a reset email is the first thing an attacker tries to
+  forge, so this one says plainly what to do if you did NOT ask for it.
+-->
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-text-size-adjust:100%;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <tr>
+              <td style="background-color:#0b1220;padding:20px 28px;">
+                <span style="color:#ffffff;font-size:17px;font-weight:700;letter-spacing:0.04em;">TASKCASH PRO</span>
+                <span style="color:#34d399;font-size:11px;font-weight:600;letter-spacing:0.14em;display:block;margin-top:4px;">WATCH. COMPLETE. EARN.</span>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:32px 28px 8px 28px;">
+                <h1 style="margin:0 0 14px 0;color:#0b1220;font-size:21px;line-height:1.3;font-weight:700;">
+                  Reset your password
+                </h1>
+                <p style="margin:0 0 14px 0;color:#334155;font-size:15px;line-height:1.65;">
+                  We received a request to reset the password for
+                  <strong style="color:#0b1220;">{{ .Email }}</strong>. Choose a new one below — your
+                  current password keeps working until you do.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:8px 28px 0 28px;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="border-radius:10px;background-color:#059669;">
+                      <a href="{{ .ConfirmationURL }}"
+                         style="display:inline-block;padding:14px 28px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;">
+                        Choose a new password
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:24px 28px 0 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fef2f2;border-left:3px solid #dc2626;border-radius:6px;">
+                  <tr>
+                    <td style="padding:14px 16px;color:#7f1d1d;font-size:13px;line-height:1.65;">
+                      <strong>If you did not request this, do nothing and tell us.</strong> Your password
+                      is unchanged and no link has been used. If you get repeated reset emails, contact
+                      support — somebody may be trying your address.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:24px 28px 0 28px;">
+                <p style="margin:0;color:#64748b;font-size:13px;line-height:1.6;">
+                  This link is single-use and expires shortly. TaskCash Pro staff will never ask you for
+                  this link, your password, or a verification code.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:28px;">
+                <hr style="border:none;border-top:1px solid #e2e8f0;margin:0 0 18px 0;" />
+                <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.7;">
+                  TaskCash Pro — rewards for eligible sponsored activities. Rewards depend on campaign
+                  rules and availability, not on deposits, and are not guaranteed.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

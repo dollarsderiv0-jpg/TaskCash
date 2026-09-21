@@ -1,0 +1,147 @@
+# ============================================================================
+# Render blueprint — TaskCash Pro
+#
+# Verified locally against a real production server: `npm run build` compiles
+# cleanly, and `npm start` (next start) serves on whatever PORT is injected
+# (checked with PORT=4180) while reporting NODE_ENV=production, which is what
+# makes the application's isProduction() guards engage.
+#
+# NO SECRET VALUE IS STORED HERE. Every credential uses `sync: false`, which
+# makes Render prompt for it and keeps it out of this repository — the correct
+# place for a Daraja Consumer Secret, a Passkey, a B2C security credential or a
+# Supabase secret key. Variable NAMES only.
+#
+# Callback URLs are not secret either, but they are deployment-specific, so they
+# are prompted for too: they must be the real HTTPS domain and must match the
+# paths registered on the Daraja app (mpesa/config.ts refuses http:// and refuses
+# localhost in production).
+# ============================================================================
+
+services:
+  - type: web
+    name: taskcash-pro
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    # The health endpoint reports whether the app can DO ITS JOB (database
+    # reachable, schema present, configuration complete), not merely whether the
+    # process is up. A Node server answering 200 with an unreachable database is
+    # not healthy, and must not be treated as such by a deploy.
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+
+      # Explicit even though `next start` sets it: this single flag decides
+      # whether the production-only guards engage (refusing Safaricom's sandbox
+      # host, refusing a localhost callback URL). It should not depend on
+      # framework behaviour we happen not to control.
+      - key: NODE_ENV
+        value: production
+
+      # ---- Which payment provider, and in which environment -----------------
+      - key: PAYMENTS_PROVIDER
+        value: mpesa
+      - key: MPESA_ENV
+        value: production
+      - key: MPESA_TRANSACTION_TYPE
+        value: CustomerPayBillOnline
+
+      # ---- Supabase ---------------------------------------------------------
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      # Server-only. Bypasses RLS. Never give it a NEXT_PUBLIC_ prefix.
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+
+      # ---- Application ------------------------------------------------------
+      # The public HTTPS origin of this service. Password-reset and email
+      # confirmation links are built from it, so a wrong value here produces
+      # emails that point at the wrong host.
+      - key: APP_URL
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      # Protects the scheduled reconciliation job below.
+      - key: CRON_SECRET
+        sync: false
+
+      # ---- M-Pesa collections (deposits / STK Push) -------------------------
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_CALLBACK_URL
+        sync: false
+        # e.g. https://<your-domain>/api/payments/mpesa/callback
+
+      # ---- M-Pesa payouts (withdrawals / B2C) -------------------------------
+      # A separate credential set on purpose: taking money in and sending money
+      # out are configured independently. Until these are set, an approved
+      # withdrawal stays APPROVED with the funds HELD — it is not paid, not
+      # failed, and the hold is not released.
+      - key: MPESA_B2C_INITIATOR_NAME
+        sync: false
+      - key: MPESA_B2C_SECURITY_CREDENTIAL
+        sync: false
+      - key: MPESA_B2C_RESULT_URL
+        sync: false
+      - key: MPESA_B2C_QUEUE_TIMEOUT_URL
+        sync: false
+
+      # ---- Callback authenticity (set at least one for production) ----------
+      # Safaricom does not sign callbacks. With MPESA_CALLBACK_SECRET set,
+      # register the callback URLs with ?token=<secret> appended; a mismatch is
+      # rejected with 401. Alternatively allowlist source addresses with
+      # MPESA_CALLBACK_IPS. With neither, a callback is recorded as unverified:
+      # deposits are still only credited after an independent STK status query,
+      # but a payout result is not acted on at all and waits for an operator.
+      - key: MPESA_CALLBACK_SECRET
+        sync: false
+
+      # ---- Email (Supabase Auth SMTP; used by tooling, not by src/) ---------
+      - key: SMTP_HOST
+        sync: false
+
+  # ---------------------------------------------------------------------------
+  # Reconciliation sweep — every 10 minutes.
+  #
+  # The Vercel cron in vercel.json does not exist on Render, and this sweep is
+  # not optional: an STK Push whose callback never arrives (customer lost
+  # signal, Safaricom delivery failure) stays PENDING forever without it, and the
+  # customer has paid. This asks Safaricom what actually happened and settles
+  # only what is genuinely confirmed.
+  #
+  # Uses node for the request rather than curl, so it depends on nothing beyond
+  # the Node runtime. The endpoint accepts `Authorization: Bearer <CRON_SECRET>`.
+  #
+  # GET, not POST: the route exports only a GET handler, and this command was
+  # verified against a running server rather than assumed. With no provider
+  # credentials it answers 503 and reports that nothing was reconciled, which is
+  # the honest outcome — it does not pretend a sweep happened.
+  # ---------------------------------------------------------------------------
+  - type: cron
+    name: taskcash-reconcile
+    runtime: node
+    schedule: "*/10 * * * *"
+    buildCommand: npm ci
+    startCommand: >-
+      node -e "fetch((process.env.APP_URL||'').replace(/\/$/,'')+'/api/cron/reconcile',{headers:{Authorization:'Bearer '+process.env.CRON_SECRET}}).then(async r=>{console.log(r.status, await r.text())}).catch(e=>{console.error(e);process.exit(1)})"
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: APP_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false

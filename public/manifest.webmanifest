@@ -1,0 +1,40 @@
+{
+  "name": "TaskCash Pro",
+  "short_name": "TaskCash",
+  "description": "Earn rewards from eligible online activities.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070f20",
+  "theme_color": "#0e1a33",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Watch & Earn",
+      "url": "/dashboard/watch"
+    },
+    {
+      "name": "Wallet",
+      "url": "/dashboard/wallet"
+    },
+    {
+      "name": "Referrals",
+      "url": "/dashboard/referrals"
+    }
+  ]
+}

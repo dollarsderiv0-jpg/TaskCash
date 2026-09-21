@@ -1,0 +1,629 @@
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { ApiError, isMissingSchemaFailure } from "@/lib/api/errors";
+import { logger } from "@/lib/logger";
+import type { Video, VideoCampaign } from "@/lib/types";
+
+/**
+ * Video catalogue reads. Eligibility rules are *reported* here for the UI, but
+ * they are enforced authoritatively inside public.video_start() and
+ * public.video_complete_session().
+ */
+
+/**
+ * A video's package context, as the watcher needs to see it.
+ *
+ * `null` means the video is in no package — it behaves as it always has, with no
+ * purchase needed. Everything else here is REPORTED for the UI; the gate itself
+ * lives in `video_start` and `video_complete_session`.
+ */
+export type VideoPackageInfo = {
+  id: string;
+  name: string;
+  owned: boolean;
+  dailyCap: number;
+  earnedToday: number;
+  /** When the daily allowance comes back. Null when the user does not hold it. */
+  resetsAt: string | null;
+};
+
+export type VideoCard = Video & {
+  campaign: VideoCampaign | null;
+  rewardedToday: number;
+  remainingToday: number;
+  eligible: boolean;
+  reason: string | null;
+  package: VideoPackageInfo | null;
+};
+
+/**
+ * How many videos a page of the catalogue carries.
+ *
+ * Every card is serialized into the page it is rendered on, so the row count IS
+ * the payload: 305 rows produced a ~150KB flight payload — mostly JSON field
+ * names, not content — and 305 cards of DOM. Both costs are removed by
+ * returning a page and telling the client how many rows exist in total, so the
+ * "show more" control can continue from where it left off.
+ *
+ * 24 is chosen so a phone renders the first screenful without a long main-thread
+ * block while still making "show more" rare on a typical catalogue.
+ */
+export const VIDEO_PAGE_SIZE = 24;
+
+/** A hard ceiling, so a hand-written `?limit=100000` cannot re-create the problem. */
+const MAX_PAGE_SIZE = 60;
+
+export type VideoPage = {
+  items: VideoCard[];
+  /** Total ACTIVE videos, not just those on this page. */
+  total: number;
+  offset: number;
+  limit: number;
+};
+
+export async function listAvailableVideos(
+  userId: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<VideoPage> {
+  const limit = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, Math.floor(options.limit ?? VIDEO_PAGE_SIZE) || VIDEO_PAGE_SIZE),
+  );
+  const offset = Math.max(0, Math.floor(options.offset ?? 0) || 0);
+
+  const supabase = await createServerSupabaseClient();
+
+  /*
+    `count: "exact"` rides along with the page request, so the total costs no
+    extra round trip; `range` is what keeps the response proportional to what is
+    actually shown.
+  */
+  const { data: videos, error, count } = await supabase
+    .from("videos")
+    .select("*", { count: "exact" })
+    .eq("status", "ACTIVE")
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) throw error;
+  const list = (videos ?? []) as Video[];
+  if (list.length === 0) return { items: [], total: count ?? 0, offset, limit };
+
+  const campaignIds = Array.from(
+    new Set(list.map((v) => v.campaign_id).filter((id): id is string => Boolean(id))),
+  );
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const [campaignsRes, sessionsRes, packageLinksRes, purchasesRes] = await Promise.all([
+    campaignIds.length > 0
+      ? supabase.from("video_campaigns").select("*").in("id", campaignIds)
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("video_watch_sessions")
+      .select("video_id, status, rewarded_at")
+      .eq("user_id", userId)
+      .eq("status", "REWARDED")
+      .gte("rewarded_at", startOfToday.toISOString()),
+    /*
+      Which videos belong to a package (migration 0014). RLS hides rows whose
+      package is not ACTIVE, so a draft tier's videos simply read as free — which
+      is why a tier must be published before its videos can be seen as gated.
+    */
+    supabase
+      .from("package_videos")
+      .select("video_id, package_id")
+      .in(
+        "video_id",
+        list.map((v) => v.id),
+      ),
+    supabase
+      .from("user_packages")
+      .select("package_id")
+      .eq("user_id", userId)
+      .eq("status", "ACTIVE"),
+  ]);
+
+  const campaigns = new Map(
+    ((campaignsRes.data ?? []) as VideoCampaign[]).map((c) => [c.id, c]),
+  );
+
+  const rewardedToday = new Map<string, number>();
+  for (const row of (sessionsRes.data ?? []) as { video_id: string }[]) {
+    rewardedToday.set(row.video_id, (rewardedToday.get(row.video_id) ?? 0) + 1);
+  }
+
+  const now = Date.now();
+
+  /* ------------------------------------------------------------------------ */
+  /* package context                                                           */
+  /* ------------------------------------------------------------------------ */
+
+  const packageByVideo = new Map<string, string>();
+  for (const row of (packageLinksRes.data ?? []) as { video_id: string; package_id: string }[]) {
+    packageByVideo.set(row.video_id, row.package_id);
+  }
+
+  const ownedPackageIds = new Set(
+    ((purchasesRes.data ?? []) as { package_id: string }[]).map((row) => row.package_id),
+  );
+
+  const packageIds = Array.from(
+    new Set(Array.from(packageByVideo.values()).filter((id) => ownedPackageIds.has(id))),
+  );
+
+  const tierNames = new Map<string, string>();
+  if (packageIds.length > 0) {
+    const { data: tiers } = await supabase
+      .from("packages")
+      .select("id, name")
+      .in("id", packageIds);
+
+    for (const tier of (tiers ?? []) as { id: string; name: string }[]) {
+      tierNames.set(tier.id, tier.name);
+    }
+  }
+
+  /*
+    Allowance figures come from `package_daily_usage`, the single definition of
+    the day boundary (midnight in Africa/Nairobi) and the same function the
+    database uses to refuse a reward. Recomputing the day in JavaScript would let
+    the countdown and the enforcement disagree.
+
+    The RPC is service-role only BECAUSE it takes a user id, so it is called here
+    with the already-authenticated user's own id and never with anything from a
+    request.
+  */
+  const admin = createAdminSupabaseClient();
+  const usage = new Map<
+    string,
+    { earnedToday: number; remaining: number; cap: number; resetsAt: string | null }
+  >();
+
+  await Promise.all(
+    packageIds.map(async (packageId) => {
+      const { data: rows, error: usageError } = await admin.rpc("package_daily_usage", {
+        p_user_id: userId,
+        p_package_id: packageId,
+      });
+
+      /*
+        Migration 0014 may not be applied yet. The watch page must keep working
+        in that state: a missing function means "no package accounting", which is
+        exactly how the app behaved before packages existed. Any OTHER error is a
+        real failure and is raised.
+      */
+      if (usageError) {
+        if (isMissingSchemaFailure(usageError)) return;
+        throw usageError;
+      }
+
+      const row = (Array.isArray(rows) ? rows[0] : rows) as Record<string, unknown> | null;
+      usage.set(packageId, {
+        earnedToday: Number(row?.earned_today ?? 0),
+        remaining: Number(row?.remaining ?? 0),
+        cap: Number(row?.daily_cap ?? 0),
+        resetsAt: row?.resets_at ? String(row.resets_at) : null,
+      });
+    }),
+  );
+
+  const items = list.map((video) => {
+    const campaign = video.campaign_id ? campaigns.get(video.campaign_id) ?? null : null;
+    const done = rewardedToday.get(video.id) ?? 0;
+    const remaining = video.daily_limit > 0 ? Math.max(0, video.daily_limit - done) : Infinity;
+
+    const packageId = packageByVideo.get(video.id) ?? null;
+    const packageUsage = packageId ? usage.get(packageId) : undefined;
+    const packageInfo: VideoPackageInfo | null = packageId
+      ? {
+          id: packageId,
+          name: tierNames.get(packageId) ?? "a package",
+          owned: ownedPackageIds.has(packageId),
+          dailyCap: packageUsage?.cap ?? 0,
+          earnedToday: packageUsage?.earnedToday ?? 0,
+          resetsAt: packageUsage?.resetsAt ?? null,
+        }
+      : null;
+
+    /*
+      The allowance can only be spent while there is room for THIS video's
+      reward: the database refuses a reward that would take the total past the
+      cap, so a video costing more than what is left is not earnable today. That
+      is the condition mirrored here, which is why the countdown appears one
+      video early rather than letting the user watch and then be refused.
+    */
+    const allowanceExhausted = Boolean(
+      packageInfo?.owned &&
+        packageInfo.dailyCap > 0 &&
+        packageInfo.earnedToday + Number(video.reward_amount) > packageInfo.dailyCap,
+    );
+
+    let eligible = true;
+    let reason: string | null = null;
+
+    if (packageInfo && !packageInfo.owned) {
+      eligible = false;
+      reason = `This video is part of the ${packageInfo.name} package. Activate it to earn from this video.`;
+    } else if (allowanceExhausted) {
+      eligible = false;
+      reason = `You have earned today's allowance from ${packageInfo?.name ?? "this package"}. It resets at midnight (East Africa Time).`;
+    }
+
+    if (video.total_view_limit !== null && video.total_views >= video.total_view_limit) {
+      eligible = false;
+      reason = "This campaign has reached its viewer limit.";
+    } else if (campaign) {
+      if (campaign.start_at && new Date(campaign.start_at).getTime() > now) {
+        eligible = false;
+        reason = "This campaign has not started yet.";
+      } else if (campaign.end_at && new Date(campaign.end_at).getTime() < now) {
+        eligible = false;
+        reason = "This campaign has ended.";
+      } else if (campaign.spent + video.reward_amount > campaign.budget) {
+        eligible = false;
+        reason = "This campaign's reward budget is exhausted.";
+      }
+    } else if (video.daily_limit > 0 && remaining <= 0) {
+      eligible = false;
+      reason = "You have reached today's limit for this video.";
+    }    if (eligible && video.daily_limit > 0 && remaining <= 0) {
+      eligible = false;
+      reason = "You have reached today's limit for this video.";
+    }
+
+    return {
+      ...video,
+      campaign,
+      rewardedToday: done,
+      remainingToday: Number.isFinite(remaining) ? remaining : -1,
+      eligible,
+      reason,
+      package: packageInfo,
+    };
+  });
+
+  return { items, total: count ?? items.length, offset, limit };
+}
+
+export type StartSessionResult = {
+  sessionId: string;
+  sessionToken: string;
+  videoId: string;
+  title: string;
+  description: string | null;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  durationSeconds: number;
+  requiredWatchSeconds: number;
+  rewardAmount: number;
+  currency: string;
+  startedAt: string;
+  watchedSeconds: number;
+  status: string;
+  resumed: boolean;
+};
+
+export async function startVideoSession(input: {
+  userId: string;
+  videoId: string;
+  ipHash: string | null;
+  deviceHash: string | null;
+}): Promise<StartSessionResult> {
+  const admin = createAdminSupabaseClient();
+
+  const { data, error } = await admin.rpc("video_start", {
+    p_user_id: input.userId,
+    p_video_id: input.videoId,
+    p_ip_hash: input.ipHash,
+    p_device_hash: input.deviceHash,
+  });
+
+  // Rethrown raw so the shared mapper converts the raised token into a safe
+  // user-facing message.
+  if (error) throw error;
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row) throw new ApiError("SESSION_NOT_CREATED", "The watch session could not be started.", 500);
+
+  return {
+    sessionId: String(row.session_id),
+    sessionToken: String(row.session_token),
+    videoId: String(row.video_id),
+    title: String(row.title),
+    description: (row.description as string | null) ?? null,
+    videoUrl: String(row.video_url),
+    thumbnailUrl: (row.thumbnail_url as string | null) ?? null,
+    durationSeconds: Number(row.duration_seconds),
+    requiredWatchSeconds: Number(row.required_watch_seconds),
+    rewardAmount: Number(row.reward_amount),
+    currency: String(row.currency),
+    startedAt: String(row.started_at),
+    watchedSeconds: Number(row.watched_seconds ?? 0),
+    status: String(row.status),
+    resumed: Boolean(row.resumed),
+  };
+}
+
+export type ProgressResult = {
+  watchedSeconds: number;
+  requiredWatchSeconds: number;
+  elapsedSeconds: number;
+  status: string;
+  ready: boolean;
+};
+
+export async function reportVideoProgress(input: {
+  userId: string;
+  sessionToken: string;
+  watchedSeconds: number;
+}): Promise<ProgressResult> {
+  const admin = createAdminSupabaseClient();
+
+  const { data, error } = await admin.rpc("video_progress", {
+    p_user_id: input.userId,
+    p_session_token: input.sessionToken,
+    p_watched_seconds: input.watchedSeconds,
+  });
+
+  if (error) {
+    /*
+      `public.video_progress` declares its result columns as OUT parameters, one
+      of which is named `watched_seconds`, and then referenced that name
+      unqualified in its own UPDATE. PL/pgSQL cannot tell the parameter from the
+      column, so the function raises 42702 on EVERY call it receives.
+
+      The migration that fixes it (0011) may not yet be applied to a given
+      environment — and because plpgsql bodies are parsed at *execution* time,
+      the schema looks perfectly healthy while every progress report fails. That
+      combination is worth one fallback: without it, watch progress is never
+      recorded, the server-side watch-time gate can never be satisfied, and the
+      user watches a full minute only to be told their session could not be
+      verified. Which is exactly what it looked like.
+
+      The fallback is deliberately narrow and non-financial:
+
+        · it runs only for the schema faults above (an ambiguous column, a
+          missing function) — never for a permission or connectivity error
+        · it touches only `watched_seconds`, `last_activity_at` and `status`
+        · it clamps the claim to the wall-clock time since the session started,
+          which is what the function does, and
+        · it decides nothing about money. `video_complete_session` re-checks the
+          watch requirement against the database's own clock, so a fallback that
+          round numbers up cannot produce a reward.
+
+      Once 0011 is applied the function succeeds and this path stops being used.
+    */
+    if (!isVideoSchemaFault(error)) throw error;
+    return progressWithoutDatabaseFunction(input);
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row) throw new ApiError("SESSION_NOT_FOUND", "That watch session has expired.", 404);
+
+  return {
+    watchedSeconds: Number(row.watched_seconds),
+    requiredWatchSeconds: Number(row.required_watch_seconds),
+    elapsedSeconds: Number(row.elapsed_seconds),
+    status: String(row.status),
+    ready: Boolean(row.ready),
+  };
+}
+
+/** The error signatures that mean "this environment is missing migration 0011". */
+function isVideoSchemaFault(error: unknown): boolean {
+  const code = String((error as { code?: unknown })?.code ?? "");
+  const message = String((error as { message?: unknown })?.message ?? "");
+  return (
+    code === "42702" ||
+    code === "PGRST202" ||
+    code === "42883" ||
+    /column reference .* is ambiguous/i.test(message) ||
+    /function public\.video_progress\(.*\) does not exist/i.test(message)
+  );
+}
+
+let warnedAboutMissingProgressFunction = false;
+
+/**
+ * Server-side equivalent of `public.video_progress`, used only when that
+ * function cannot run. Not a reward path: it stores an elapsed-time claim.
+ */
+async function progressWithoutDatabaseFunction(input: {
+  userId: string;
+  sessionToken: string;
+  watchedSeconds: number;
+}): Promise<ProgressResult> {
+  const admin = createAdminSupabaseClient();
+
+  const { data: session } = await admin
+    .from("video_watch_sessions")
+    .select("id, status, started_at, watched_seconds, required_watch_seconds")
+    .eq("session_token", input.sessionToken)
+    .eq("user_id", input.userId)
+    .maybeSingle<{
+      id: string;
+      status: string;
+      started_at: string;
+      watched_seconds: number | null;
+      required_watch_seconds: number;
+    }>();
+
+  if (!session) {
+    throw new ApiError("SESSION_NOT_FOUND", "That watch session has expired.", 404);
+  }
+  if (["REWARDED", "EXPIRED", "REJECTED", "SUSPENDED"].includes(session.status)) {
+    throw new ApiError(
+      "SESSION_NOT_FOUND",
+      "That watch session has expired. Please start the video again.",
+      404,
+    );
+  }
+
+  const elapsedSeconds = Math.max(0, (Date.now() - new Date(session.started_at).getTime()) / 1000);
+  const requiredWatchSeconds = Number(session.required_watch_seconds) || 0;
+
+  // The same clamp the function applies: a client cannot claim more watch time
+  // than has actually elapsed. The 1.5s allowance absorbs reporting jitter.
+  const claimed = Math.min(Math.max(Number(input.watchedSeconds) || 0, 0), elapsedSeconds + 1.5);
+  const watchedSeconds = Math.max(Number(session.watched_seconds) || 0, claimed);
+
+  const { error } = await admin
+    .from("video_watch_sessions")
+    .update({
+      watched_seconds: watchedSeconds,
+      last_activity_at: new Date().toISOString(),
+      status: "WATCHING",
+    })
+    .eq("id", session.id);
+
+  if (error) {
+    logger.error("video_progress_fallback_failed", { sessionId: session.id, error: error.message });
+    throw error;
+  }
+
+  if (!warnedAboutMissingProgressFunction) {
+    warnedAboutMissingProgressFunction = true;
+    logger.warn("video_progress_function_unusable", {
+      fallback: "storing progress server-side instead",
+      fix: "apply migration 0011_progress_ambiguity.sql (npm run db:bundle, then db:push-sql)",
+    });
+  }
+
+  return {
+    watchedSeconds,
+    requiredWatchSeconds,
+    elapsedSeconds,
+    status: "WATCHING",
+    ready: watchedSeconds >= requiredWatchSeconds && elapsedSeconds >= requiredWatchSeconds,
+  };
+}
+
+export type CompletionResult = {
+  status: string;
+  rewardAmount: number | null;
+  currency: string;
+  transactionId: string | null;
+  reference: string | null;
+  watchedSeconds: number;
+  rejectReason: string | null;
+  duplicate: boolean;
+};
+
+export async function completeVideoSession(input: {
+  userId: string;
+  sessionToken: string;
+}): Promise<CompletionResult> {
+  const admin = createAdminSupabaseClient();
+
+  /*
+    Bring the stored watch time up to date first, from the server's own clock.
+
+    `video_complete_session` requires `watched_seconds >= required_watch_seconds`
+    as well as its own elapsed-time check, and it treats a shortfall as terminal:
+    the session is marked REJECTED and a WATCH_TIME_MISMATCH fraud event is filed.
+    So a completion that arrives with a stale watch time does not just fail — it
+    destroys the session and penalises the user.
+
+    Stale is the normal case, not an edge case. Progress is reported on a timer
+    that browsers throttle in a background tab, and the completion path can be
+    reached by a recovery job rather than a browser at all. Refreshing here means
+    the claim handed to the database is always the most the server is willing to
+    allow: the number passed below is deliberately absurd, because the clamp
+    (`least(claimed, elapsed + 1.5)`) reduces it to real elapsed time. Nothing
+    here can invent watch time — it only stops real watch time being forgotten.
+
+    A failure is ignored on purpose: if the session is already terminal, the call
+    below is what reports that, with the right status and message.
+  */
+  try {
+    await reportVideoProgress({
+      userId: input.userId,
+      sessionToken: input.sessionToken,
+      watchedSeconds: Number.MAX_SAFE_INTEGER,
+    });
+  } catch {
+    /* the completion call below reports the real reason */
+  }
+
+  const { data, error } = await admin.rpc("video_complete_session", {
+    p_user_id: input.userId,
+    p_session_token: input.sessionToken,
+  });
+
+  if (error) throw error;
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row) throw new ApiError("SESSION_NOT_FOUND", "That watch session has expired.", 404);
+
+  return {
+    status: String(row.result_status),
+    rewardAmount: row.reward_amount === null ? null : Number(row.reward_amount),
+    currency: String(row.currency ?? "KES"),
+    transactionId: (row.transaction_id as string | null) ?? null,
+    reference: (row.reference as string | null) ?? null,
+    watchedSeconds: Number(row.watched_seconds ?? 0),
+    rejectReason: (row.reject_reason as string | null) ?? null,
+    duplicate: Boolean(row.duplicate),
+  };
+}
+
+/**
+ * Recovery path for /api/rewards/process.
+ *
+ * If a client dropped out after satisfying the watch requirement, the server
+ * can still settle the session. It re-runs the exact same authoritative
+ * completion function, so a session is never rewarded twice.
+ */
+export async function processPendingRewards(userId: string) {
+  const admin = createAdminSupabaseClient();
+
+  const { data: pending } = await admin
+    .from("video_watch_sessions")
+    .select("session_token, required_watch_seconds, started_at, watched_seconds, status")
+    .eq("user_id", userId)
+    .in("status", ["STARTED", "WATCHING"])
+    .order("started_at", { ascending: false })
+    .limit(20);
+
+  const results: CompletionResult[] = [];
+
+  for (const row of (pending ?? []) as {
+    session_token: string;
+    required_watch_seconds: number;
+    started_at: string;
+    watched_seconds: number;
+    status: string;
+  }[]) {
+    const elapsed = (Date.now() - new Date(row.started_at).getTime()) / 1000;
+    if (elapsed < row.required_watch_seconds || Number(row.watched_seconds) < row.required_watch_seconds) {
+      continue;
+    }
+    results.push(
+      await completeVideoSession({ userId, sessionToken: row.session_token }),
+    );
+  }
+
+  const credited = results.filter((r) => r.status === "REWARDED");
+  return {
+    processed: results.length,
+    credited: credited.length,
+    totalCredited: credited.reduce((sum, r) => sum + (r.rewardAmount ?? 0), 0),
+    results,
+  };
+}
+
+export async function getVideoRewardHistory(userId: string, limit = 20) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("video_watch_sessions")
+    .select("id, video_id, status, watched_seconds, reward_amount, rewarded_at, reject_reason, videos(title)")
+    .eq("user_id", userId)
+    .eq("status", "REWARDED")
+    .order("rewarded_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return data ?? [];
+}

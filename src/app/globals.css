@@ -1,0 +1,172 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * TaskCash Pro theme.
+ *
+ * Deep navy surfaces, high-contrast type, and a single ORANGE accent used for
+ * the brand — primary buttons, focus rings, active navigation, marketing
+ * highlights.
+ *
+ * Orange is the brand colour and NOT a semantic one. Money direction keeps its
+ * own meaning and stays green/red through `tc-amount-in` / `tc-amount-out`:
+ * a credit must never be confusable with a warning, and a debit must never look
+ * like a call to action. That is why those two classes do not read from
+ * `--primary` and are deliberately left untouched here.
+ *
+ * The one tint to be careful with: orange sits close to the amber used for
+ * "warning" and "pending review". Anything that means "money in" therefore uses
+ * green, never the accent — see the note on `tc-amount-in` below.
+ */
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 21 90% 41%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 25% 94%;
+    --secondary-foreground: 222 47% 15%;
+
+    --muted: 215 25% 94%;
+    --muted-foreground: 215 16% 42%;
+
+    --accent: 28 100% 94%;
+    --accent-foreground: 20 90% 28%;
+
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 215 22% 88%;
+    --input: 215 22% 88%;
+    --ring: 21 90% 45%;
+
+    --radius: 0.9rem;
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 42% 9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 45% 8%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 25 95% 55%;
+    --primary-foreground: 20 100% 7%;
+
+    --secondary: 222 32% 15%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 222 32% 14%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 21 70% 16%;
+    --accent-foreground: 28 95% 84%;
+
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 25 95% 55%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Never let a focus ring be invisible on a financial form. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  ::selection {
+    @apply bg-primary/25;
+  }
+}
+
+@layer components {
+  .tc-surface {
+    @apply rounded-2xl border border-border bg-card;
+  }
+
+  .tc-elevated {
+    @apply rounded-2xl border border-border bg-card shadow-sm transition-shadow hover:shadow-md;
+  }
+
+  .tc-gradient-text {
+    @apply bg-gradient-to-r from-orangeBrand-300 via-orangeBrand-400 to-orangeBrand-600 bg-clip-text text-transparent;
+  }
+
+  .tc-hero-glow {
+    background:
+      radial-gradient(60% 60% at 15% 0%, hsl(25 95% 55% / 0.18), transparent 60%),
+      radial-gradient(50% 50% at 90% 10%, hsl(222 70% 45% / 0.22), transparent 65%);
+  }
+
+  /* Horizontal scroll containers (mobile earnings strips) without scrollbars. */
+  .tc-scroll-x {
+    @apply flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1;
+    scrollbar-width: none;
+  }
+  .tc-scroll-x::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Money IN — green on purpose, and NOT the orange brand accent. */
+  .tc-amount-in {
+    @apply text-emeraldBrand-500 dark:text-emeraldBrand-400;
+  }
+
+  /* Money OUT — red, never the accent, never orange. */
+  .tc-amount-out {
+    @apply text-rose-500 dark:text-rose-400;
+  }
+
+  .tc-skeleton {
+    @apply relative overflow-hidden rounded-md bg-muted;
+  }
+  .tc-skeleton::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  }
+}
+
+@layer utilities {
+  /* Respect users who prefer reduced motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .tc-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40" role="img" aria-label="TaskCash Pro">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1a33" />
+      <stop offset="100%" stop-color="#b33d09" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="40" height="40" rx="12" fill="url(#bg)" />
+  <path d="M9 13.5h9.5" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" />
+  <path d="M13.75 13.5V27" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" />
+  <path d="M31.5 15.2a7.4 7.4 0 1 0 0 9.6" stroke="#f8833b" stroke-width="2.6" stroke-linecap="round" fill="none" />
+</svg>
