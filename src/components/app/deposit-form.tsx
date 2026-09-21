@@ -10,6 +10,7 @@ import { Alert, Badge, Separator, statusBadgeVariant } from "@/components/ui/mis
 import { useToast } from "@/components/ui/toast";
 import { apiRequest, newIdempotencyKey } from "@/lib/client/api";
 import { formatDateTime, formatMoney } from "@/lib/money/format";
+import { depositQuickPicks } from "@/lib/money/limits";
 import { statusLabel, type Deposit } from "@/lib/types";
 
 type DepositResult = {
@@ -59,6 +60,13 @@ export function DepositForm({
 
   const numericAmount = Number(amount);
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
+
+  // Derived from the same bounds the server enforces, so no chip can offer an
+  // amount the server will then refuse.
+  const quickPicks = React.useMemo(
+    () => depositQuickPicks({ min: minAmount, max: maxAmount }, [500, 1000, 2000, 5000]),
+    [minAmount, maxAmount],
+  );
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -183,10 +191,10 @@ export function DepositForm({
         ) : null}
 
         {/*
-          No minimum/maximum hint: the platform's amounts are not published on the
-          website. The field still enforces them — `min`/`max` below and the
-          server's own check — and a value outside the bounds answers with a
-          precise message naming the limit, which is the only place it appears.
+          The bounds arrive from the server (`getDepositBounds`) rather than from
+          a second reading of settings, so this field, the quick-pick chips below
+          and the server's own check all enforce the same numbers. A value outside
+          them still answers with a precise message naming the limit.
         */}
         <Field label={`Amount (${currency})`} htmlFor="amount" error={errors.amount}>
           <Input
@@ -203,19 +211,17 @@ export function DepositForm({
         </Field>
 
         <div className="flex flex-wrap gap-2">
-          {[minAmount, 500, 1000, 2000, 5000]
-            .filter((value, index, list) => value <= maxAmount && list.indexOf(value) === index)
-            .map((value) => (
-              <Button
-                key={value}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setAmount(String(value))}
-              >
-                {formatMoney(value, currency)}
-              </Button>
-            ))}
+          {quickPicks.map((value) => (
+            <Button
+              key={value}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setAmount(String(value))}
+            >
+              {formatMoney(value, currency)}
+            </Button>
+          ))}
         </div>
 
         <Field

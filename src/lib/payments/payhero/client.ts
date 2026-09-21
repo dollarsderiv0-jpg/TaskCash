@@ -91,23 +91,42 @@ export async function payheroRequest<T>(path: string, options: FetchOptions): Pr
 
       if (!response.ok) {
         const asRecord = payload as Record<string, unknown> | null;
+
+        /*
+          PayHero's error envelope is `{ error_code, error_message, status_code }`.
+          Those names were absent from this reader, so every PayHero refusal was
+          reduced to the bare "PayHero responded with HTTP 417" and the actual
+          reason — "rate limit exceeded: request throttled" — was discarded. An
+          opaque payment failure is the expensive kind: it is indistinguishable
+          from an outage and sends an operator looking in the wrong place.
+        */
         const safe =
+          (typeof asRecord?.error_message === "string" && asRecord.error_message) ||
           (typeof asRecord?.detail === "string" && asRecord.detail) ||
           (typeof asRecord?.error === "string" && asRecord.error) ||
           (typeof asRecord?.errorMessage === "string" && asRecord.errorMessage) ||
           (typeof asRecord?.message === "string" && asRecord.message) ||
           `PayHero responded with HTTP ${response.status}`;
 
+        const providerCode =
+          typeof asRecord?.error_code === "string" ? asRecord.error_code : null;
+
+        /*
+          A throttle is its own condition, not a bad request and not an outage:
+          the request was valid and the provider is up — we are simply asking too
+          often. Deliberately NOT added to the transient set, because retrying
+          re-spends the very budget that is exhausted and can extend the throttle.
+          It gets its own code so the deposit path can say "try again shortly"
+          instead of "invalid request" or "we could not reach the provider".
+        */
+        const throttled = /rate limit|throttl/i.test(safe);
+        const code = throttled ? "PROVIDER_THROTTLED" : "PROVIDER_HTTP_ERROR";
+
         // 5xx and 429 will not fix themselves within one request, but they are
         // worth a bounded retry; a 4xx will not fix itself at all.
         const transient = response.status >= 500 || response.status === 429;
 
-        lastError = new PayHeroError(
-          "PROVIDER_HTTP_ERROR",
-          safe,
-          response.status,
-          asRecord,
-        );
+        lastError = new PayHeroError(code, safe, response.status, asRecord);
 
         if (transient && attempt < attempts) {
           await sleep(400 * 2 ** (attempt - 1));
@@ -119,11 +138,11 @@ export async function payheroRequest<T>(path: string, options: FetchOptions): Pr
           operation: options.operation,
           requestReference: options.requestReference,
           responseCode: response.status,
-          safeMessage: safe,
+          safeMessage: providerCode ? `${safe} [${providerCode}]` : safe,
           error: lastError,
         });
 
-        throw new PayHeroError("PROVIDER_HTTP_ERROR", safe, response.status, asRecord, internalErrorId);
+        throw new PayHeroError(code, safe, response.status, asRecord, internalErrorId);
       }
 
       return payload as T;

@@ -15,6 +15,7 @@ import {
 } from "@/lib/payments/provider";
 import { missingProviderEnv } from "@/lib/env";
 import { getPublicSettings } from "@/lib/settings";
+import { effectiveDepositBounds, type DepositBounds } from "@/lib/money/limits";
 import type { Deposit, Profile, Wallet } from "@/lib/types";
 import type { ProviderResult } from "@/lib/payments/types";
 
@@ -44,6 +45,56 @@ export type CreateDepositResult = {
   message: string;
 };
 
+/**
+ * The deposit bounds that apply to one currency.
+ *
+ * Read by BOTH the server-side check below and the deposit page, so the numbers
+ * the page renders are the numbers the server enforces. They used to be computed
+ * separately — the page from `system_settings`, the service from
+ * `max(currency, setting)` — which is how the page came to advertise a KES 10
+ * minimum that the server refused.
+ *
+ * Throws CURRENCY_NOT_SUPPORTED for a currency the platform does not accept,
+ * which is what the deposit path has always done before contacting a provider.
+ */
+export async function getDepositBounds(currency: string): Promise<DepositBounds> {
+  const admin = createAdminSupabaseClient();
+  const settings = await getPublicSettings();
+
+  const currencyRow = await admin
+    .from("currencies")
+    .select("min_deposit, max_deposit, enabled")
+    .eq("code", currency)
+    .maybeSingle<{ min_deposit: number; max_deposit: number | null; enabled: boolean }>();
+
+  if (!currencyRow.data || !currencyRow.data.enabled) {
+    throw new ApiError("CURRENCY_NOT_SUPPORTED", "This currency is not currently supported.", 400);
+  }
+
+  return effectiveDepositBounds({
+    currencyMinDeposit: Number(currencyRow.data.min_deposit),
+    currencyMaxDeposit: currencyRow.data.max_deposit,
+    settingMinDeposit: settings.minDeposit,
+    settingMaxDeposit: settings.maxDeposit,
+  });
+}
+
+/**
+ * True when the provider refused because we are asking too often.
+ *
+ * Checked by CODE rather than by matching the provider's prose, for the same
+ * reason the configuration check is: a message can be reworded by the provider at
+ * any time, and a misread throttle is reported to the customer as an outage.
+ */
+function isProviderThrottleError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "PROVIDER_THROTTLED"
+  );
+}
+
 export async function createDeposit(input: {
   profile: Profile;
   wallet: Wallet;
@@ -53,7 +104,6 @@ export async function createDeposit(input: {
   ipHash: string | null;
 }): Promise<CreateDepositResult> {
   const admin = createAdminSupabaseClient();
-  const settings = await getPublicSettings();
 
   const normalised = normalisePhone(input.phone, input.profile.country);
   if (!normalised.ok) {
@@ -61,49 +111,22 @@ export async function createDeposit(input: {
   }
 
   // Amounts are validated against the currency's configured bounds, never a
-  // client-supplied limit.
-  const currencyRow = await admin
-    .from("currencies")
-    .select("min_deposit, max_deposit, enabled")
-    .eq("code", input.wallet.currency)
-    .maybeSingle<{ min_deposit: number; max_deposit: number | null; enabled: boolean }>();
+  // client-supplied limit — and from the same source the page renders from, so
+  // the two cannot disagree.
+  const bounds = await getDepositBounds(input.wallet.currency);
 
-  if (!currencyRow.data || !currencyRow.data.enabled) {
-    throw new ApiError("CURRENCY_NOT_SUPPORTED", "This currency is not currently supported.", 400);
-  }
-
-  /*
-    The effective bounds are the INTERSECTION of the currency's own bounds and the
-    platform-wide settings, in the same shape the minimum has always used:
-
-      floor = max(currency.min_deposit, settings.minDeposit)
-      ceiling = min(currency.max_deposit, settings.maxDeposit)
-
-    The currency column is the hard per-currency bound (migration 0017 added the
-    ceiling; it never existed before, so the only limit on a single deposit was
-    what the payment provider would accept). The setting remains the operator's
-    day-to-day dial, so raising it in the admin panel can never lift a currency
-    above its own ceiling.
-  */
-  const minAmount = Math.max(Number(currencyRow.data.min_deposit), settings.minDeposit);
-  if (input.amount < minAmount) {
+  if (input.amount < bounds.min) {
     throw new ApiError(
       "BELOW_MINIMUM",
-      `The minimum deposit is ${formatMoney(minAmount, input.wallet.currency)}.`,
+      `The minimum deposit is ${formatMoney(bounds.min, input.wallet.currency)}.`,
       422,
     );
   }
 
-  const maxAmount = Math.min(
-    currencyRow.data.max_deposit === null || currencyRow.data.max_deposit === undefined
-      ? Number.POSITIVE_INFINITY
-      : Number(currencyRow.data.max_deposit),
-    settings.maxDeposit,
-  );
-  if (input.amount > maxAmount) {
+  if (input.amount > bounds.max) {
     throw new ApiError(
       "ABOVE_MAXIMUM",
-      `The maximum single deposit is ${formatMoney(maxAmount, input.wallet.currency)}.`,
+      `The maximum single deposit is ${formatMoney(bounds.max, input.wallet.currency)}.`,
       422,
     );
   }
@@ -300,6 +323,36 @@ export async function createDeposit(input: {
         "Deposits are unavailable right now: the payment provider is not configured yet. " +
           "Nothing was charged and no money was taken.",
         503,
+      );
+    }
+
+    /*
+      A throttle is not an outage, and reporting it as one is wrong twice over: it
+      tells the customer the provider is unreachable when it answered clearly, and
+      it hides the one action that actually helps — waiting. PayHero signals this
+      as HTTP 417 with "rate limit exceeded: request throttled".
+    */
+    if (isProviderThrottleError(error)) {
+      logger.warn("deposit_provider_throttled", {
+        userId: input.profile.id,
+        depositId: deposit.id,
+      });
+
+      await admin
+        .from("deposits")
+        .update({
+          status: "FAILED",
+          failure_reason:
+            "Payment provider is throttling requests. Nothing was charged; safe to retry shortly.",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", deposit.id);
+
+      throw new ApiError(
+        "PAYMENT_PROVIDER_THROTTLED",
+        "The payment provider is busy and did not accept the request. Nothing was charged. " +
+          "Please try again in a few minutes.",
+        429,
       );
     }
 

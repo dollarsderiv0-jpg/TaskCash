@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { guardVerifiedPage } from "@/lib/auth/guards";
-import { listUserDeposits } from "@/server/services/deposits";
-import { getPublicSettings } from "@/lib/settings";
+import { getDepositBounds, listUserDeposits } from "@/server/services/deposits";
 import { DepositForm } from "@/components/app/deposit-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert } from "@/components/ui/misc";
@@ -13,12 +12,18 @@ export const dynamic = "force-dynamic";
 
 export default async function DepositPage() {
   const session = await guardVerifiedPage("/dashboard/deposit");
-  const [settings, deposits] = await Promise.all([
-    getPublicSettings(),
+  const currency = session.wallet.currency;
+
+  /*
+    The bounds come from the server path the deposit itself enforces, not from a
+    second reading of settings.minDeposit/maxDeposit. Reading the setting directly
+    is how this page previously advertised a KES 10 minimum while the service
+    enforced the currency's KES 800 floor.
+  */
+  const [bounds, deposits] = await Promise.all([
+    getDepositBounds(currency),
     listUserDeposits(session.profile.id, 15),
   ]);
-
-  const currency = session.wallet.currency;
 
   return (
     <div className="space-y-6">
@@ -42,7 +47,7 @@ export default async function DepositPage() {
           <div>
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Minimum deposit</p>
             <p className="mt-1 text-lg font-bold tabular-nums">
-              {formatMoney(settings.minDeposit, currency)}
+              {formatMoney(bounds.min, currency)}
             </p>
           </div>
           <div>
@@ -50,7 +55,7 @@ export default async function DepositPage() {
               Maximum single deposit
             </p>
             <p className="mt-1 text-lg font-bold tabular-nums">
-              {formatMoney(settings.maxDeposit, currency)}
+              {formatMoney(bounds.max, currency)}
             </p>
           </div>
         </CardContent>
@@ -76,8 +81,8 @@ export default async function DepositPage() {
           <DepositForm
             currency={currency}
             defaultPhone={session.profile.phone}
-            minAmount={settings.minDeposit}
-            maxAmount={settings.maxDeposit}
+            minAmount={bounds.min}
+            maxAmount={bounds.max}
             recentDeposits={deposits}
           />
         </CardContent>
