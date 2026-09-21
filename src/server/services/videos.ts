@@ -149,16 +149,34 @@ export async function listAvailableVideos(
     ((purchasesRes.data ?? []) as { package_id: string }[]).map((row) => row.package_id),
   );
 
+  /*
+    Two different sets, deliberately, because they answer different questions.
+
+    `packageIds` is only the tiers this user OWNS: the allowance RPC below is
+    per-user, and there is nothing to compute for a tier they do not hold.
+
+    The NAMES must cover every tier that locks a video on this page, owned or
+    not, because the lock message is what names the tier to buy:
+
+        "This video is part of the <name> package."
+
+    Resolving names from the owned set alone meant the one person who actually
+    sees that message — a non-owner — was the one person whose lookup came back
+    empty, so every gated video read "part of the a package package". The tier
+    name is the upsell, not a secret.
+  */
   const packageIds = Array.from(
     new Set(Array.from(packageByVideo.values()).filter((id) => ownedPackageIds.has(id))),
   );
 
+  const namedPackageIds = Array.from(new Set(packageByVideo.values()));
+
   const tierNames = new Map<string, string>();
-  if (packageIds.length > 0) {
+  if (namedPackageIds.length > 0) {
     const { data: tiers } = await supabase
       .from("packages")
       .select("id, name")
-      .in("id", packageIds);
+      .in("id", namedPackageIds);
 
     for (const tier of (tiers ?? []) as { id: string; name: string }[]) {
       tierNames.set(tier.id, tier.name);
