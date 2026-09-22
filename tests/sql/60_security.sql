@@ -88,7 +88,11 @@ do $$
 declare
   money_fns text[] := array[
     'public.wallet_post(uuid,text,numeric,text,text,text,text,jsonb,text,uuid)',
-    'public.deposit_credit(text,text,jsonb)',
+    -- Must match the SURVIVING signature. 0021 dropped the three-argument
+    -- definition, and has_function_privilege() raises rather than returning
+    -- false for a name that does not exist — so a stale signature here fails
+    -- loudly instead of quietly removing deposit_credit from this check.
+    'public.deposit_credit(text,text,text,numeric,jsonb)',
     'public.withdrawal_reserve(uuid,numeric,text,text,numeric,int)',
     'public.withdrawal_release(uuid,text,text,uuid,jsonb)',
     'public.withdrawal_complete(uuid,text,text,jsonb)',

@@ -40,6 +40,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { mpesaSyncRefusal } from "./lib/mpesa-sandbox-guard.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const ENV_FILE = resolve(ROOT, ".env.local");
@@ -120,7 +121,14 @@ const SECRET_TYPE = new Set([
 ]);
 
 function parseArgs(argv) {
-  const args = { target: "production", url: null, cron: false, dryRun: false, provider: null };
+  const args = {
+    target: "production",
+    url: null,
+    cron: false,
+    dryRun: false,
+    provider: null,
+    allowSandbox: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--target") args.target = argv[++i];
@@ -129,6 +137,7 @@ function parseArgs(argv) {
     else if (arg.startsWith("--provider=")) args.provider = arg.slice("--provider=".length);
     else if (arg === "--generate-cron-secret") args.cron = true;
     else if (arg === "--dry-run") args.dryRun = true;
+    else if (arg === "--allow-sandbox-mpesa-credentials") args.allowSandbox = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!["production", "preview", "development"].includes(args.target)) {
@@ -240,6 +249,25 @@ function main() {
 
   const skipped = PASSTHROUGH.filter((name) => !env.get(name));
   if (skipped.length) console.log(`Not in .env.local, so NOT pushed: ${skipped.join(", ")}`);
+
+  /*
+    Refused BEFORE the first push, and before the plan is described as if it were
+    going to happen. Checked in dry-run too, so `--dry-run` is a way to find out
+    that this tree is aimed at the sandbox rather than a way to rehearse a sync
+    that would then be refused for real.
+  */
+  const refusal = mpesaSyncRefusal({
+    env,
+    target: args.target,
+    allowSandbox: args.allowSandbox,
+    plannedNames: [...plan.keys()].filter((name) => name.startsWith("MPESA_")),
+  });
+
+  if (refusal.blocked) {
+    console.error(`\n\u2717 Refusing to sync: ${refusal.reason}\n`);
+    console.error("  Nothing was sent to Vercel.");
+    process.exit(1);
+  }
 
   console.log(`\nTarget: ${args.target}${args.dryRun ? " (dry run)" : ""}`);
   let failures = 0;

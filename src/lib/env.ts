@@ -259,6 +259,10 @@ const serverEnvSchema = z.object({
   MPESA_B2C_QUEUE_TIMEOUT_URL: z.string().url().optional(),
   MPESA_TRANSACTION_TYPE: z.enum(["CustomerPayBillOnline", "CustomerBuyGoodsOnline"]).optional(),
   MPESA_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  // A sandbox-only deposit floor. See mpesaSandboxMinDeposit() — it is inert
+  // unless the application is in development, pointed at Daraja's sandbox, and
+  // actually collecting through M-Pesa.
+  MPESA_SANDBOX_MIN_DEPOSIT: z.coerce.number().int().nonnegative().optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema> & {
@@ -452,6 +456,41 @@ export function hasMpesaPayoutCredentials(): boolean {
 
 export function mpesaEnvironment(): "sandbox" | "production" {
   return process.env.MPESA_ENV?.trim() === "production" ? "production" : "sandbox";
+}
+
+/**
+ * A deposit floor that applies ONLY to a local test against Daraja's sandbox.
+ *
+ * Why this exists rather than a change to `currencies.min_deposit`: the live
+ * floor is KES 800, sourced from the production database, and a sandbox run
+ * needs to move a trivial amount. Lowering that row would mean editing live
+ * payment configuration to run a test — and then remembering to put it back,
+ * with the risk of leaving the live floor at KES 50. This is the same outcome
+ * with nothing to undo: the sandbox floor lives in the local environment, so it
+ * disappears when the variable does, and the production row is never touched.
+ *
+ * Three independent locks, all of which must hold:
+ *
+ *   1. `NODE_ENV` is not production. A production build can never see it — and
+ *      this is checked here rather than relied upon from `resolveBaseUrl()`,
+ *      which refuses sandbox hosts in production but says nothing about limits.
+ *   2. `MPESA_ENV` is sandbox. Pointed at the live host, the real floor applies.
+ *   3. The active provider is M-Pesa. PayHero and SasaPay deposits are unaffected.
+ *
+ * It can only ever LOWER a floor (`limits.ts` ignores it above the real
+ * minimum), so a mistaken value cannot make an amount chargeable that would
+ * otherwise be refused. Returns null when no override applies.
+ */
+export function mpesaSandboxMinDeposit(): number | null {
+  const raw = process.env.MPESA_SANDBOX_MIN_DEPOSIT?.trim();
+  if (!raw) return null;
+  if (isProduction()) return null;
+  if (mpesaEnvironment() !== "sandbox") return null;
+  if (activePaymentProvider() !== "mpesa") return null;
+
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return value;
 }
 
 /**

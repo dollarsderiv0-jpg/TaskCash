@@ -88,10 +88,14 @@ begin
   perform tc_test.confirm_email(referred);
 
   d := tc_test.create_deposit(referred, 1000, 'DEP-REF-COMM-1');
-  select * into credit from public.deposit_credit('DEP-REF-COMM-1', 'PROV-REF-COMM-1', '{}'::jsonb);
+  -- Passed by name for the same reason as 30_deposits.sql: 0021 dropped the
+  -- three-argument definition of deposit_credit, so a positional jsonb third
+  -- argument no longer resolves. `wallet_transaction_id` replaced 0002's
+  -- `tx_id` in 0015, which is what the referenced ledger row is now called.
+  select * into credit from public.deposit_credit('DEP-REF-COMM-1', 'PROV-REF-COMM-1', p_payload => '{}'::jsonb);
 
   -- mirror the service call
-  perform public.referral_commission_on_deposit(referred, credit.tx_id, 1000, 'KES');
+  perform public.referral_commission_on_deposit(referred, credit.wallet_transaction_id, 1000, 'KES');
 
   perform tc_test.eq_num('level 1 commission is 5% of the eligible deposit', tc_test.available(referrer), 50);
   perform tc_test.eq_text('the commission is recorded as CREDITED',
@@ -101,7 +105,7 @@ begin
     (select count(*)::int from public.referral_commissions where referrer_id = referrer), 1);
 
   -- Replaying the same source transaction must not pay twice.
-  perform public.referral_commission_on_deposit(referred, credit.tx_id, 1000, 'KES');
+  perform public.referral_commission_on_deposit(referred, credit.wallet_transaction_id, 1000, 'KES');
   perform tc_test.eq_num('a replayed commission credits nothing further', tc_test.available(referrer), 50);
   perform tc_test.eq_num('a replayed commission writes no second ledger row',
     (select count(*)::int from public.wallet_transactions where user_id = referrer and type = 'REFERRAL_REWARD'), 1);
@@ -122,8 +126,8 @@ begin
 
   -- No confirmation, so the referral is still PENDING.
   d := tc_test.create_deposit(referred, 1000, 'DEP-REF-UNQUAL-1');
-  select * into credit from public.deposit_credit('DEP-REF-UNQUAL-1', 'PROV-REF-UNQUAL-1', '{}'::jsonb);
-  perform public.referral_commission_on_deposit(referred, credit.tx_id, 1000, 'KES');
+  select * into credit from public.deposit_credit('DEP-REF-UNQUAL-1', 'PROV-REF-UNQUAL-1', p_payload => '{}'::jsonb);
+  perform public.referral_commission_on_deposit(referred, credit.wallet_transaction_id, 1000, 'KES');
 
   perform tc_test.eq_num('an unqualified referral earns no commission', tc_test.available(referrer), 0);
 end $$;

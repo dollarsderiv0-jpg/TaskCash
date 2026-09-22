@@ -61,6 +61,8 @@
     "deploy:env": "node scripts/vercel-env-sync.mjs",
     "check:live": "node .freebuff/vercel-live-check.mjs",
     "check:egress": "node scripts/check-egress.mjs",
+    "check:daraja": "node scripts/check-daraja-sandbox.mjs",
+    "test:daraja-sandbox": "npx tsc -p .freebuff/daraja-sandbox-test/tsconfig.json && node .freebuff/daraja-sandbox-test/run.mjs",
     "test:deposit-refusal": "npx tsc -p .freebuff/deposit-refusal-test/tsconfig.json && node .freebuff/deposit-refusal-test/run.mjs",
     "test:package-payment": "node .freebuff/package-payment-check.mjs",
     "terms:set": "node scripts/set-package-terms.mjs",

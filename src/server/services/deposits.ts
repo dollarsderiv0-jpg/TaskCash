@@ -13,7 +13,7 @@ import {
   paymentProviderId,
   verifyCollection,
 } from "@/lib/payments/provider";
-import { missingProviderEnv } from "@/lib/env";
+import { missingProviderEnv, mpesaSandboxMinDeposit } from "@/lib/env";
 import { getPublicSettings } from "@/lib/settings";
 /*
   A deposit can be payment for a package (migration 0019). The price is read from
@@ -84,6 +84,14 @@ export async function getDepositBounds(currency: string): Promise<DepositBounds>
     currencyMaxDeposit: currencyRow.data.max_deposit,
     settingMinDeposit: settings.minDeposit,
     settingMaxDeposit: settings.maxDeposit,
+    /*
+      Null except during a local Daraja-sandbox run. Passed through here rather
+      than conditioned at each call site because this function is the single
+      place both the deposit page and the server-side check read their numbers
+      from — so the page cannot advertise a sandbox floor the service refuses,
+      which is the exact class of mismatch this module was written to end.
+    */
+    sandboxMinDeposit: mpesaSandboxMinDeposit(),
   });
 }
 

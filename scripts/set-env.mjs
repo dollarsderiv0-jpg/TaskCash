@@ -451,6 +451,15 @@ function writeEnv(pairs) {
 const NON_SECRET_CONFIG = {
   MPESA_ENV: (v) =>
     v === "production" || v === "sandbox" ? null : "must be `production` or `sandbox`",
+  /*
+    A sandbox-only deposit floor, and a mode rather than a credential — so it
+    belongs on the scriptable path. It matters that this is easy to SET and easy
+    to REMOVE: it exists so one sandbox test can run at KES 50 without editing
+    the live `currencies.min_deposit` of KES 800, and it is inert outside a
+    development process pointed at Safaricom's sandbox.
+  */
+  MPESA_SANDBOX_MIN_DEPOSIT: (v) =>
+    /^\d+$/.test(v) ? null : "must be a whole number of shillings (e.g. 50)",
   PAYMENTS_PROVIDER: (v) =>
     v === "mpesa" || v === "sasapay" || v === "payhero"
       ? null

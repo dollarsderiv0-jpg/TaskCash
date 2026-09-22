@@ -22,6 +22,15 @@
 export type DepositBoundsInput = {
   /** `currencies.min_deposit` — the hard per-currency floor. */
   currencyMinDeposit: number;
+  /**
+   * A local Daraja-sandbox floor, when one applies. See
+   * `mpesaSandboxMinDeposit()` in `@/lib/env`, which returns null unless the
+   * application is in development and pointed at Safaricom's sandbox.
+   *
+   * It may only ever LOWER `min`, so passing a value by mistake cannot make an
+   * amount chargeable that would otherwise be refused.
+   */
+  sandboxMinDeposit?: number | null;
   /** `currencies.max_deposit` — `null`/`undefined` means the currency sets no ceiling. */
   currencyMaxDeposit: number | null | undefined;
   /** `system_settings['deposits.min_amount']` — the operator's dial. */
@@ -40,7 +49,7 @@ export type DepositBounds = {
    * operator looking at "minimum KES 800" can see it comes from the currency,
    * not from a setting they just changed and expected to take effect.
    */
-  boundedBy: { min: "currency" | "setting"; max: "currency" | "setting" };
+  boundedBy: { min: "currency" | "setting" | "sandbox"; max: "currency" | "setting" };
 };
 
 export function effectiveDepositBounds(input: DepositBoundsInput): DepositBounds {
@@ -50,14 +59,26 @@ export function effectiveDepositBounds(input: DepositBoundsInput): DepositBounds
       ? Number.POSITIVE_INFINITY
       : Number(input.currencyMaxDeposit);
 
-  const min = Math.max(currencyMin, input.settingMinDeposit);
+  let min = Math.max(currencyMin, input.settingMinDeposit);
+  let minBound: DepositBounds["boundedBy"]["min"] =
+    currencyMin >= input.settingMinDeposit ? "currency" : "setting";
+
+  // Strictly a lowering. A sandbox floor at or above the real minimum is not a
+  // test override at all, so it is ignored rather than reported — which keeps
+  // "we are relaxed below the live floor" true whenever this is reported.
+  const sandbox = input.sandboxMinDeposit;
+  if (typeof sandbox === "number" && Number.isFinite(sandbox) && sandbox < min) {
+    min = sandbox;
+    minBound = "sandbox";
+  }
+
   const max = Math.min(currencyMax, input.settingMaxDeposit);
 
   return {
     min,
     max,
     boundedBy: {
-      min: currencyMin >= input.settingMinDeposit ? "currency" : "setting",
+      min: minBound,
       max: currencyMax <= input.settingMaxDeposit ? "currency" : "setting",
     },
   };

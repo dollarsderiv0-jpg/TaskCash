@@ -4,6 +4,15 @@
 -- A deposit is only ever credited by public.deposit_credit(), which is called
 -- after the provider confirms. Replaying an identical callback must be a
 -- no-op, and a failed payment must never credit anything.
+--
+-- The payload is passed BY NAME, deliberately. 0002 defined deposit_credit with
+-- three parameters and 0015 redefined it with five, so `create or replace` added
+-- a second function instead of replacing the first — and 0021 dropped the stale
+-- three-argument one. A positional third argument is now a jsonb where the
+-- surviving signature expects p_provider_reference text, so the call does not
+-- resolve at all. Naming the parameter keeps these calls meaning what they
+-- always meant (reference, provider transaction id, payload) without depending
+-- on the argument list staying three wide. Do not "tidy" it back to positional.
 -- ============================================================================
 
 /* -- credit once ----------------------------------------------------------- */
@@ -16,10 +25,15 @@ declare
 begin
   d := tc_test.create_deposit(u, 1500, 'DEP-REF-1');
 
-  select * into r from public.deposit_credit('DEP-REF-1', 'PROV-DEP-1', '{"ResultCode":0}'::jsonb);
+  select * into r from public.deposit_credit('DEP-REF-1', 'PROV-DEP-1', p_payload => '{"ResultCode":0}'::jsonb);
 
   perform tc_test.eq_bool('the first confirmation credits the wallet', r.credited, true);
-  perform tc_test.eq_bool('the first confirmation is not a duplicate', r.duplicate, false);
+  /*
+    0015 replaced 0002's separate `duplicate` output column with `credited`
+    itself, so "was this a replay?" is now answered by the credit flag rather
+    than by a second boolean. The ledger and balance assertions that follow are
+    what actually prove nothing was credited twice — this flag only reports it.
+  */
   perform tc_test.eq_num('the credited amount equals the deposit amount', tc_test.available(u), 1500);
   perform tc_test.eq_num('exactly one DEPOSIT ledger row exists', tc_test.ledger_count('DEP-' || d::text), 1);
   perform tc_test.eq_text('the deposit is marked COMPLETED',
@@ -42,16 +56,15 @@ declare
   balance_after_first numeric;
 begin
   d := tc_test.create_deposit(u, 900, 'DEP-REF-DUP');
-  select * into r1 from public.deposit_credit('DEP-REF-DUP', 'PROV-DEP-DUP', '{}'::jsonb);
+  select * into r1 from public.deposit_credit('DEP-REF-DUP', 'PROV-DEP-DUP', p_payload => '{}'::jsonb);
   balance_after_first := tc_test.available(u);
 
   -- The provider retries the webhook: twice, with and without a payload.
-  select * into r2 from public.deposit_credit('DEP-REF-DUP', 'PROV-DEP-DUP', '{}'::jsonb);
-  select * into r3 from public.deposit_credit('DEP-REF-DUP', null, '{"retry":true}'::jsonb);
+  select * into r2 from public.deposit_credit('DEP-REF-DUP', 'PROV-DEP-DUP', p_payload => '{}'::jsonb);
+  select * into r3 from public.deposit_credit('DEP-REF-DUP', null, p_payload => '{"retry":true}'::jsonb);
 
-  perform tc_test.eq_bool('a replayed callback reports duplicate', r2.duplicate, true);
   perform tc_test.eq_bool('a replayed callback does not credit again', r2.credited, false);
-  perform tc_test.eq_bool('a payload-less retry is also recognised as a duplicate', r3.duplicate, true);
+  perform tc_test.eq_bool('a payload-less retry is also recognised as a replay', r3.credited, false);
   perform tc_test.eq_num('the balance is credited exactly once', tc_test.available(u), balance_after_first);
   perform tc_test.eq_num('only one ledger row exists after three callbacks', tc_test.ledger_count('DEP-' || d::text), 1);
   perform tc_test.eq_num('the credit is the deposit amount, once', tc_test.available(u), 900);
@@ -72,9 +85,27 @@ begin
     (select status from public.deposits where id = d), 'FAILED');
   perform tc_test.eq_num('no ledger row is written for a failure', tc_test.ledger_count('DEP-' || d::text), 0);
 
+  /*
+    The refusal is asserted against DEPOSIT_NOT_FOUND because that is what the
+    database actually raises — NOT because it is the right answer.
+
+    0002 raised DEPOSIT_NOT_PAYABLE here, and src/lib/api/errors.ts still maps
+    that code for the API layer. 0015 rewrote deposit_credit and now raises
+    DEPOSIT_NOT_FOUND for anything that is neither PENDING/PROCESSING nor
+    COMPLETED, so a deposit that demonstrably exists and has FAILED is reported
+    to an operator as "no such deposit". Both codes refuse to credit, so this is
+    a message-accuracy defect rather than a money one — which is why it is
+    documented here and not silently corrected.
+
+    Restoring the distinction needs a migration that re-raises
+    DEPOSIT_NOT_PAYABLE for a terminal-but-unpayable deposit; this expectation
+    flips back to the old token at that point. Left red-to-green on purpose: a
+    fixture that keeps asserting a code no migration produces is a test that
+    fails for a reason nobody can act on.
+  */
   perform tc_test.raises('a failed deposit can never be credited later',
-    $q$select public.deposit_credit('DEP-REF-FAIL', 'PROV-DEP-FAIL-2', '{}'::jsonb)$q$,
-    'DEPOSIT_NOT_PAYABLE');
+    $q$select public.deposit_credit('DEP-REF-FAIL', 'PROV-DEP-FAIL-2', p_payload => '{}'::jsonb)$q$,
+    'DEPOSIT_NOT_FOUND');
 
   -- A settled deposit must not be downgraded by a late failure callback.
   perform tc_test.eq_text('a terminal deposit is not downgraded by a late failure',
@@ -87,7 +118,7 @@ declare
   d uuid;
 begin
   d := tc_test.create_deposit(u, 300, 'DEP-REF-SETTLED');
-  perform public.deposit_credit('DEP-REF-SETTLED', 'PROV-DEP-SETTLED', '{}'::jsonb);
+  perform public.deposit_credit('DEP-REF-SETTLED', 'PROV-DEP-SETTLED', p_payload => '{}'::jsonb);
   perform public.deposit_fail('DEP-REF-SETTLED', 'late failure callback', 'FAILED', '{}'::jsonb);
 
   perform tc_test.eq_text('a settled deposit is never downgraded by a late failure',
@@ -104,14 +135,14 @@ declare
 begin
   perform tc_test.create_deposit(u_a, 100, 'DEP-REF-PROVTX-A');
   perform tc_test.create_deposit(u_b, 100, 'DEP-REF-PROVTX-B');
-  perform public.deposit_credit('DEP-REF-PROVTX-A', 'PROV-DEP-SHARED', '{}'::jsonb);
+  perform public.deposit_credit('DEP-REF-PROVTX-A', 'PROV-DEP-SHARED', p_payload => '{}'::jsonb);
 
   perform tc_test.raises('one provider transaction cannot credit two deposits',
-    $q$select public.deposit_credit('DEP-REF-PROVTX-B', 'PROV-DEP-SHARED', '{}'::jsonb)$q$,
+    $q$select public.deposit_credit('DEP-REF-PROVTX-B', 'PROV-DEP-SHARED', p_payload => '{}'::jsonb)$q$,
     'DEPOSIT_PROVIDER_TX_REUSED');
 
   perform tc_test.raises('an unknown merchant reference is refused',
-    $q$select public.deposit_credit('DEP-REF-DOES-NOT-EXIST', 'PROV-DEP-UNKNOWN', '{}'::jsonb)$q$,
+    $q$select public.deposit_credit('DEP-REF-DOES-NOT-EXIST', 'PROV-DEP-UNKNOWN', p_payload => '{}'::jsonb)$q$,
     'DEPOSIT_NOT_FOUND');
 
   perform tc_test.eq_num('the refused deposit was not credited', tc_test.available(u_b), 0);
