@@ -205,7 +205,16 @@ export function RegisterForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-5" noValidate>
+    /*
+      Sized for a phone screen first.
+
+      This is the page every new account arrives on, and it used to run well
+      past the bottom of a phone: six fields, four multi-line hints and a consent
+      row, each separated by 20px. Not a word has been removed — the vertical
+      spend has: gaps 20 → 12, controls 44 → 40 on a phone, and country with its
+      currency on one row instead of two.
+    */
+    <form onSubmit={onSubmit} className="space-y-3" noValidate>
       {formError ? (
         <Alert variant="destructive" title="Registration failed">
           <p>{formError}</p>
@@ -230,6 +239,7 @@ export function RegisterForm() {
           onChange={(e) => setForm({ ...form, fullName: e.target.value })}
           aria-invalid={Boolean(errors.fullName)}
           placeholder="As it appears on your ID"
+          className="h-10 sm:h-11"
         />
       </Field>
 
@@ -244,30 +254,51 @@ export function RegisterForm() {
           onChange={(e) => setForm({ ...form, email: e.target.value })}
           aria-invalid={Boolean(errors.email)}
           placeholder="you@example.com"
+          className="h-10 sm:h-11"
         />
       </Field>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <Field label="Country" htmlFor="country">
-          <Select
-            id="country"
-            value={form.country}
-            onChange={(e) => {
-              const country = e.target.value;
-              setForm({ ...form, country, currency: currencyForCountry(country) });
-            }}
-          >
-            {COUNTRIES.map((country) => (
-              <option key={country.code} value={country.code}>
-                {country.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
+      {/*
+        Country and currency share one row, with the explanation under the pair
+        rather than beside each control.
 
-        <Field label="Currency" htmlFor="currency" hint="Set from your country. More currencies can be enabled later.">
-          <Input id="currency" value={form.currency} readOnly aria-readonly />
-        </Field>
+        Stacked, this was two labels, two controls and two wrapped hint blocks —
+        roughly seventy pixels of a phone screen spent on one decision, and the
+        currency is not editable.
+      */}
+      <div className="space-y-1.5">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Country" htmlFor="country" className="space-y-1">
+            <Select
+              id="country"
+              className="h-10 sm:h-11"
+              value={form.country}
+              onChange={(e) => {
+                const country = e.target.value;
+                setForm({ ...form, country, currency: currencyForCountry(country) });
+              }}
+            >
+              {COUNTRIES.map((country) => (
+                <option key={country.code} value={country.code}>
+                  {country.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field label="Currency" htmlFor="currency" className="space-y-1">
+            <Input
+              id="currency"
+              className="h-10 sm:h-11"
+              value={form.currency}
+              readOnly
+              aria-readonly
+            />
+          </Field>
+        </div>
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          Set from your country. More currencies can be enabled later.
+        </p>
       </div>
 
       <Field
@@ -286,6 +317,7 @@ export function RegisterForm() {
           onChange={(e) => setForm({ ...form, phone: e.target.value })}
           aria-invalid={Boolean(errors.phone)}
           placeholder={form.country === "KE" ? "0712 345 678" : "Your mobile number"}
+          className="h-10 sm:h-11"
         />
       </Field>
 
@@ -304,7 +336,7 @@ export function RegisterForm() {
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             aria-invalid={Boolean(errors.password)}
-            className="pr-11"
+            className="h-10 pr-11 sm:h-11"
           />
           <button
             type="button"
@@ -323,10 +355,11 @@ export function RegisterForm() {
           value={form.referralCode}
           onChange={(e) => setForm({ ...form, referralCode: e.target.value.toUpperCase() })}
           placeholder="TCXXXXX"
+          className="h-10 sm:h-11"
         />
       </Field>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="flex items-start gap-3 text-sm">
           <Checkbox
             checked={form.acceptTerms}
@@ -361,7 +394,7 @@ export function RegisterForm() {
         {blocked ? `Try again in ${formatCountdown(retryAfter ?? 0)}` : "Create account"}
       </Button>
 
-      <p className="text-center text-xs text-muted-foreground">
+      <p className="pt-0.5 text-center text-xs text-muted-foreground">
         Already have an account?{" "}
         <Link href="/login" className="font-semibold text-primary hover:underline">
           Sign in

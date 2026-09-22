@@ -76,8 +76,13 @@ export function AppShell({ user, children }: { user: ShellUser; children: React.
 
   async function logout() {
     setLoggingOut(true);
+    /*
+      `/sign-out`, not `/`. The root route opens the brand mark and sends a
+      signed-out visitor to the sign-up form, so landing there after signing out
+      invited somebody to register for the account they had just left.
+    */
     await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/");
+    router.push("/sign-out");
     router.refresh();
   }
 

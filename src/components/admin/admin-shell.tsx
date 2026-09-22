@@ -65,8 +65,10 @@ export function AdminShell({
   React.useEffect(() => setOpen(false), [pathname]);
 
   async function logout() {
+    /* `/sign-out` rather than `/`, which is now the splash that hands a
+       signed-out visitor to the sign-up form. See app-shell.tsx. */
     await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/");
+    router.push("/sign-out");
     router.refresh();
   }
 

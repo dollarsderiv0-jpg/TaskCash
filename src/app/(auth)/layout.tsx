@@ -21,8 +21,16 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
 
   return (
+    /*
+      Phone first, like the forms inside it.
+
+      The header, the padding around the card and the footer are all chrome, and
+      on a short screen they were taking roughly 200px of the height the sign-up
+      form needed — the form is the thing that has to fit. Each reverts to the
+      roomier value at `sm`, where the space costs nothing.
+    */
     <div className="tc-hero-glow flex min-h-dvh flex-col">
-      <header className="container flex h-16 items-center justify-between">
+      <header className="container flex h-14 items-center justify-between sm:h-16">
         <Link href="/" aria-label="TaskCash Pro home">
           <Logo />
         </Link>
@@ -34,8 +42,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         </Link>
       </header>
 
-      <main id="main" className="container flex flex-1 items-start justify-center py-8 sm:items-center">
-        <div className="w-full max-w-md space-y-4">
+      <main id="main" className="container flex flex-1 items-start justify-center py-4 sm:items-center sm:py-8">
+        <div className="w-full max-w-md space-y-3 sm:space-y-4">
           {!configured ? (
             <Alert variant="warning" title="Platform setup incomplete">
               <p>{PLATFORM_NOT_CONFIGURED_MESSAGE}</p>
@@ -53,7 +61,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         </div>
       </main>
 
-      <footer className="container py-6 text-center text-xs text-muted-foreground">
+      <footer className="container py-4 text-center text-[11px] text-muted-foreground sm:py-6 sm:text-xs">
         <p>
           TaskCash Pro is a rewards platform. Rewards depend on eligible activities and campaign
           rules — no return is guaranteed.
