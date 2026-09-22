@@ -56,7 +56,9 @@
     "db:token": "node scripts/push-sql.mjs --check-token",
     "smtp:configure": "node scripts/configure-smtp.mjs",
     "deploy:env": "node scripts/vercel-env-sync.mjs",
-    "check:live": "node .freebuff/vercel-live-check.mjs"
+    "check:live": "node .freebuff/vercel-live-check.mjs",
+    "check:egress": "node scripts/check-egress.mjs",
+    "test:deposit-refusal": "npx tsc -p .freebuff/deposit-refusal-test/tsconfig.json && node .freebuff/deposit-refusal-test/run.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.3",

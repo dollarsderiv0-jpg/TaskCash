@@ -95,6 +95,187 @@ function isProviderThrottleError(error: unknown): boolean {
   );
 }
 
+/**
+ * The provider-agnostic `code` on an error, when it carries one.
+ *
+ * Read structurally rather than by `instanceof`, for the same reason the
+ * configuration check is: every provider defines its own error class, so an
+ * `instanceof` test silently stops matching the day the active provider changes.
+ */
+function providerErrorCode(error: unknown): string | null {
+  if (error === null || typeof error !== "object" || !("code" in error)) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+/** The HTTP status the provider answered with, when there was one. */
+function providerErrorStatus(error: unknown): number | null {
+  if (error === null || typeof error !== "object") return null;
+  const raw =
+    (error as { httpStatus?: unknown }).httpStatus ?? (error as { status?: unknown }).status;
+  return typeof raw === "number" ? raw : null;
+}
+
+/**
+ * Refusals we can attribute to a moment when NO provider transaction existed.
+ *
+ * Every entry here means the provider either answered "no" or was never asked, so
+ * there is nothing for reconciliation to match and nothing for the customer's
+ * payment history to record.
+ */
+const CERTAIN_PRE_TRANSACTION_REFUSALS = new Set([
+  // An explicit refusal response — `success: false`, or a rejected STK request.
+  "PROVIDER_REFUSED",
+  // The provider answered 417/429 "rate limit exceeded" instead of accepting.
+  "PROVIDER_THROTTLED",
+  // We never called the provider at all.
+  "PAYMENT_NOT_CONFIGURED",
+]);
+
+/**
+ * Does this failure leave a deposit record behind?
+ *
+ * A request the provider refused **before a transaction existed** must not enter
+ * the customer's payment history. A FAILED deposit row is a claim that a payment
+ * was attempted and failed; when no prompt was ever dispatched and no provider
+ * transaction was ever created, that claim is simply false, and it makes the
+ * customer's history unreadable exactly when they are trying to retry.
+ *
+ * The line is not "failed" versus "not failed" — it is **refused** versus **we do
+ * not know**:
+ *
+ *  - *Refused:* an explicit refusal, a throttle, a 4xx, or a platform that was
+ *    never configured. The provider told us it did not accept, so no transaction
+ *    can exist. The row is removed.
+ *  - *Unknown:* unreachable, timeout, or a 5xx. The request may have been
+ *    delivered and the answer lost — the provider could have created a
+ *    transaction we never saw. The row is kept and closed FAILED, because it is
+ *    the only local pointer that lets the reconciliation sweep match an orphan
+ *    provider transaction and surface it for manual settlement.
+ *
+ * Exported so the rule is testable without a database or a provider.
+ */
+export function providerRefusedBeforeTransaction(refusal: {
+  code: string | null;
+  httpStatus: number | null;
+  providerTransactionId: string | null;
+}): boolean {
+  // A transaction id means the provider accepted the request. Any refusal came
+  // afterwards, and a settled or failed payment must stay reconcilable.
+  if (refusal.providerTransactionId) return false;
+
+  if (refusal.code !== null && CERTAIN_PRE_TRANSACTION_REFUSALS.has(refusal.code)) return true;
+
+  return (
+    refusal.code === "PROVIDER_HTTP_ERROR" &&
+    refusal.httpStatus !== null &&
+    refusal.httpStatus < 500
+  );
+}
+
+/**
+ * Records a provider refusal without leaving a false payment in the customer's
+ * history.
+ *
+ * Auditability is preserved two ways when the row is removed: a `payment_events`
+ * row — the same table provider callbacks land in, and not customer-visible —
+ * and one structured log line. The audit row is written BEFORE the delete, so no
+ * path can delete a record and lose the reason with it.
+ */
+async function recordRefusal(
+  admin: ReturnType<typeof createAdminSupabaseClient>,
+  deposit: Deposit,
+  refusal: {
+    code: string;
+    message: string;
+    raw?: Record<string, unknown> | null;
+    httpStatus?: number | null;
+    providerTransactionId?: string | null;
+  },
+) {
+  const message = refusal.message || "The payment provider refused the request.";
+  const httpStatus = refusal.httpStatus ?? null;
+
+  const dropRecord = providerRefusedBeforeTransaction({
+    code: refusal.code,
+    httpStatus,
+    providerTransactionId: refusal.providerTransactionId ?? null,
+  });
+
+  const { error: auditError } = await admin.from("payment_events").insert({
+    provider: paymentProviderId(),
+    direction: "COLLECTION",
+    merchant_reference: deposit.merchant_reference,
+    // Deliberately null: the whole point is that the provider never created one.
+    provider_transaction_id: null,
+    outcome: "FAILED",
+    signature_valid: false,
+    // Already accounted for by this function; nothing downstream needs to act.
+    processed: true,
+    duplicate: false,
+    payload: {
+      refusedBeforeTransaction: dropRecord,
+      code: refusal.code,
+      message,
+      initiation: refusal.raw ?? null,
+    },
+    error: message.slice(0, 500),
+  });
+
+  if (auditError) {
+    logger.warn("deposit_refusal_not_recorded", {
+      depositId: deposit.id,
+      error: auditError.message,
+    });
+  }
+
+  logger.warn("deposit_refused_by_provider", {
+    userId: deposit.user_id,
+    merchantReference: deposit.merchant_reference,
+    amount: Number(deposit.amount),
+    currency: deposit.currency,
+    code: refusal.code,
+    httpStatus,
+    keptRecord: !dropRecord,
+    auditError: auditError?.message ?? null,
+  });
+
+  const closeAsFailed = () =>
+    admin
+      .from("deposits")
+      .update({
+        status: "FAILED",
+        failure_reason: message,
+        // The provider's raw refusal, when there was one, still belongs on a
+        // record we keep. A discarded row's raw lives in the audit event.
+        ...(refusal.raw ? { callback_payload: { initiation: refusal.raw } } : {}),
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", deposit.id);
+
+  if (!dropRecord) {
+    await closeAsFailed();
+    return;
+  }
+
+  const { error: deleteError } = await admin.from("deposits").delete().eq("id", deposit.id);
+
+  if (deleteError) {
+    /*
+      Removing the row is the only way to keep this out of the customer's
+      history, and it may not fail quietly: if the delete is refused, the row is
+      CLOSED rather than left PENDING, and the failure to clean up is logged with
+      the audit event that already exists for it.
+    */
+    logger.error("deposit_refusal_cleanup_failed", {
+      depositId: deposit.id,
+      merchantReference: deposit.merchant_reference,
+      error: deleteError.message,
+    });
+    await closeAsFailed();
+  }
+}
+
 export async function createDeposit(input: {
   profile: Profile;
   wallet: Wallet;
@@ -211,8 +392,15 @@ export async function createDeposit(input: {
     throw new ApiError("DEPOSIT_CREATE_FAILED", "The deposit could not be created. Please try again.", 500);
   }
 
-  // Ask the provider to collect. Failure here means the deposit is closed as
-  // FAILED — no ledger entry is created, and the stored balance never moves.
+  /*
+    Ask the provider to collect.
+
+    No ledger entry is ever created here and the stored balance never moves. When
+    the provider refuses, what happens to the row above depends on whether it can
+    have created a transaction — see `recordRefusal`. A refusal that provably
+    preceded any transaction removes the row, so the customer's history does not
+    record a payment that never existed.
+  */
   try {
     const result = await initiateCollection({
       merchantReference,
@@ -224,19 +412,18 @@ export async function createDeposit(input: {
     });
 
     if (!result.ok) {
-      await admin
-        .from("deposits")
-        .update({
-          status: "FAILED",
-          failure_reason: result.safeMessage,
-          callback_payload: { initiation: result.raw },
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", deposit.id);
+      await recordRefusal(admin, deposit, {
+        code: "PROVIDER_REFUSED",
+        message: result.safeMessage,
+        raw: result.raw,
+        providerTransactionId: result.providerTransactionId,
+      });
 
-      // Safaricom refused the request outright, so its reason code is the real
-      // explanation and belongs on the record.
-      await recordProviderResult(admin, deposit.id, result);
+      // Only a record that survives can carry the provider's reason code; when
+      // the row is discarded, the reason lives in the audit event instead.
+      if (result.providerTransactionId) {
+        await recordProviderResult(admin, deposit.id, result);
+      }
 
       throw new ApiError(
         "DEPOSIT_REJECTED",
@@ -309,14 +496,11 @@ export async function createDeposit(input: {
         userId: input.profile.id,
         depositId: deposit.id,
       });
-      await admin
-        .from("deposits")
-        .update({
-          status: "FAILED",
-          failure_reason: "Payment provider is not configured. Nothing was charged.",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", deposit.id);
+      // We never called the provider, so no transaction can exist.
+      await recordRefusal(admin, deposit, {
+        code: "PAYMENT_NOT_CONFIGURED",
+        message: "Payment provider is not configured. Nothing was charged.",
+      });
 
       throw new ApiError(
         "PAYMENT_NOT_CONFIGURED",
@@ -338,15 +522,17 @@ export async function createDeposit(input: {
         depositId: deposit.id,
       });
 
-      await admin
-        .from("deposits")
-        .update({
-          status: "FAILED",
-          failure_reason:
-            "Payment provider is throttling requests. Nothing was charged; safe to retry shortly.",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", deposit.id);
+      /*
+        The provider answered and declined — 417/429 "rate limit exceeded"
+        arrives instead of an accepted request, so no transaction exists and the
+        customer must not be shown a failed payment for it.
+      */
+      await recordRefusal(admin, deposit, {
+        code: "PROVIDER_THROTTLED",
+        message:
+          "Payment provider is throttling requests. Nothing was charged; safe to retry shortly.",
+        httpStatus: providerErrorStatus(error),
+      });
 
       throw new ApiError(
         "PAYMENT_PROVIDER_THROTTLED",
@@ -364,14 +550,42 @@ export async function createDeposit(input: {
       error,
     });
 
-    await admin
-      .from("deposits")
-      .update({
-        status: "FAILED",
-        failure_reason: `Provider initiation failed (${internalErrorId})`,
-        completed_at: new Date().toISOString(),
-      })
-      .eq("id", deposit.id);
+    const providerCode = providerErrorCode(error);
+    const providerStatus = providerErrorStatus(error);
+
+    /*
+      A 4xx that is not a throttle is the provider *rejecting* the request: it
+      answered, and declined. Calling that "we could not reach the payment
+      provider" is the same falsehood the throttle wording used to tell — the
+      provider was reached, and the fault is in the request. 401/403 are
+      excluded: those are OUR credentials failing, which is a platform problem
+      and must not be blamed on the customer's input.
+    */
+    const rejectedByProvider =
+      providerCode === "PROVIDER_HTTP_ERROR" &&
+      providerStatus !== null &&
+      providerStatus >= 400 &&
+      providerStatus < 500 &&
+      providerStatus !== 401 &&
+      providerStatus !== 403;
+
+    // Whether this keeps its record depends on the failure: a 4xx is a refusal,
+    // while unreachable/timeout/5xx are an unknown outcome that has to stay
+    // reconcilable.
+    await recordRefusal(admin, deposit, {
+      code: providerCode ?? "PROVIDER_UNAVAILABLE",
+      message: `Provider initiation failed (${internalErrorId})`,
+      httpStatus: providerStatus,
+    });
+
+    if (rejectedByProvider) {
+      throw new ApiError(
+        "DEPOSIT_REJECTED",
+        "The payment provider rejected the request. Nothing was charged — please check the " +
+          "number and try again.",
+        422,
+      );
+    }
 
     throw new ApiError(
       "PAYMENT_PROVIDER_UNAVAILABLE",
