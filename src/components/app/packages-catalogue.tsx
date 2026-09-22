@@ -424,6 +424,27 @@ function PayByMpesa({
   );
 }
 
+/**
+ * One line of a package's specification.
+ *
+ * The card used to state the same facts three times over — price and daily limit
+ * as two big figures, then the daily limit AGAIN inside an "Earning limits" box
+ * alongside the total and the term. Everything a buyer needs to compare two tiers
+ * is five labelled values, so it is one table: faster to read than three blocks
+ * of prose, and impossible to render inconsistently because there is one place
+ * each figure comes from.
+ */
+function SpecRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 px-3 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={strong ? "text-sm font-bold tracking-tight" : "text-sm font-semibold"}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
 function TierCard({
   tier,
   currency,
@@ -495,72 +516,53 @@ function TierCard({
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              One-time price
-            </p>
-            <p className="mt-1 text-lg font-bold tracking-tight">
-              {formatMoney(tier.price, currency)}
-            </p>
-          </div>
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Daily earning limit
-            </p>
-            <p className="mt-1 text-lg font-bold tracking-tight">
-              {tier.daily_earning_cap > 0
-                ? formatMoney(tier.daily_earning_cap, currency)
-                : "Not set"}
-            </p>
-          </div>
-        </div>
-
         {tier.description ? (
           <p className="text-sm leading-relaxed text-muted-foreground">{tier.description}</p>
         ) : null}
 
         {/*
-          The terms, as the database enforces them: a ceiling per day, a ceiling in
-          total, and the window they apply to.
+          The whole offer, in one table: what it costs, what it unlocks, what it
+          can pay per day and in total, and over what window.
 
-          This replaced a "potential 3-week estimate" that multiplied the daily cap
-          by 21 and printed "net after package cost". Both halves were wrong once
-          the tiers carried a 14-day term: the projection described a term that
-          does not exist, and the net figure is a payback calculation — the one
-          thing the schema's own note says a package page must never imply, because
-          whether the ceiling is reached at all depends on the videos' campaigns.
+          "Most per day" and "Most in total" rather than "Daily earning limit" and
+          "In total": a ceiling is the most it CAN pay, and saying so in the label
+          is what stops the figures reading as a quotation. The one line under the
+          table says the rest — the ceilings are only reachable while the campaigns
+          behind the videos still have budget.
         */}
-        {tier.daily_earning_cap > 0 && !tier.owned ? (
-          <div className="rounded-xl border border-orangeBrand-200 bg-orangeBrand-50 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-orangeBrand-700">
-              Earning limits
-            </p>
-            <dl className="mt-1.5 space-y-1 text-xs text-orangeBrand-700">
-              <div className="flex items-center justify-between gap-3">
-                <dt>Per day</dt>
-                <dd className="font-semibold">{formatMoney(tier.daily_earning_cap, currency)}</dd>
-              </div>
+        {tier.daily_earning_cap > 0 ? (
+          <div className="rounded-xl border border-border">
+            <dl className="divide-y divide-border">
+              <SpecRow label="Price" value={formatMoney(tier.price, currency)} strong />
+              <SpecRow
+                label="Videos"
+                value={tier.videoCount > 0 ? String(tier.videoCount) : "Being added"}
+              />
+              <SpecRow
+                label="Most per day"
+                value={formatMoney(tier.daily_earning_cap, currency)}
+              />
               {tier.lifetime_earning_cap ? (
-                <div className="flex items-center justify-between gap-3">
-                  <dt>In total</dt>
-                  <dd className="font-semibold">
-                    {formatMoney(tier.lifetime_earning_cap, currency)}
-                  </dd>
-                </div>
+                <SpecRow
+                  label="Most in total"
+                  value={formatMoney(tier.lifetime_earning_cap, currency)}
+                />
               ) : null}
               {tier.duration_days ? (
-                <div className="flex items-center justify-between gap-3">
-                  <dt>Earning period</dt>
-                  <dd className="font-semibold">{tier.duration_days} days</dd>
-                </div>
+                <SpecRow
+                  label="Earning period"
+                  value={`${tier.duration_days} days`}
+                />
               ) : null}
             </dl>
-            <p className="mt-2 text-[11px] leading-relaxed text-orangeBrand-600">
-              These are the most this package&apos;s videos can pay, not an amount they
-              will pay. Each reward comes from a campaign with its own budget.
-            </p>
           </div>
+        ) : null}
+
+        {tier.daily_earning_cap > 0 ? (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Ceilings, not promises — each reward is paid only while its campaign still has
+            budget.
+          </p>
         ) : null}
 
         {/*
