@@ -41,6 +41,22 @@
  *
  * Warnings are advice, not errors: they are pricing calls only the operator can
  * make. The script writes what it is told.
+ *
+ * THE DESCRIPTION IS PART OF THE TERMS
+ * ------------------------------------
+ * Migration 0014 wrote each package a `description` sentence that restates the
+ * daily cap, the lifetime total and the term — "Up to KES 68 per day ... up to
+ * KES 952 in total, for 14 days." The package card renders that sentence AND a
+ * table of the same four figures, so the two are read together. Moving the
+ * columns without moving the sentence therefore printed two offers on one card:
+ * after this script last ran, Package 70000 advertised 83,300 over 14 days in
+ * prose and 1,071,000 over 180 days in the table beneath it.
+ *
+ * So the sentence is treated as generated text, and kept in step whenever the
+ * figures move. A description a person replaced with their own copy does not
+ * match the generated pattern and is never overwritten — `--fix-descriptions`
+ * repairs drift without a spec, and every run reports any card whose own text
+ * disagrees with its columns.
  */
 
 import { loadEnvLocal } from "./lib/migrate.mjs";
@@ -49,6 +65,7 @@ loadEnvLocal();
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
+const FIX_DESCRIPTIONS = args.includes("--fix-descriptions");
 
 const flag = (name, fallback) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
@@ -106,8 +123,32 @@ function parseTerms(raw) {
 
 /* -------------------------------------------------------------------------- */
 
+/*
+  The sentence migration 0014 generates, and nothing else. Hand-written copy is
+  deliberately unmatched so it can never be clobbered by a pricing change.
+*/
+const GENERATED_DESCRIPTION =
+  /^Up to KES ([\d,]+(?:\.\d+)?) per day from this package's videos, up to KES ([\d,]+(?:\.\d+)?) in total, for (\d+) days\.$/;
+
+/* Postgres to_char(x, 'FM999,999,990'): grouped thousands, decimals kept as-is. */
+function grouped(value) {
+  const text = String(value);
+  const [whole, fraction] = text.split(".");
+  const sign = whole.startsWith("-") ? "-" : "";
+  const digits = sign ? whole.slice(1) : whole;
+  return sign + digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (fraction ? `.${fraction}` : "");
+}
+
+function describeTerms(daily, total, days) {
+  return `Up to KES ${grouped(daily)} per day from this package's videos, up to KES ${grouped(total)} in total, for ${days} days.`;
+}
+
+function generatedDescription(text) {
+  return typeof text === "string" && GENERATED_DESCRIPTION.test(text);
+}
+
 const packages = await get(
-  "packages?select=id,name,price,status,duration_days,daily_earning_cap,lifetime_earning_cap&status=neq.ARCHIVED&order=price.asc,sort_order.asc",
+  "packages?select=id,name,price,status,description,duration_days,daily_earning_cap,lifetime_earning_cap&status=neq.ARCHIVED&order=price.asc,sort_order.asc",
 );
 const links = await get("package_videos?select=video_id,package_id");
 const videos = await get("videos?select=id,reward_amount,status&status=eq.ACTIVE");
@@ -163,10 +204,59 @@ for (const p of packages) {
   row(p, Number(p.duration_days), Number(p.lifetime_earning_cap));
 }
 
+/*
+  A card contradicts itself when its own sentence and its columns disagree. The
+  buyer reads both, so this is reported on every run — including a report-only
+  one, where it is the only way to see it without opening the site.
+*/
+const drifted = packages.filter((p) => {
+  if (!generatedDescription(p.description)) return false;
+  return p.description !== describeTerms(
+    Number(p.daily_earning_cap),
+    Number(p.lifetime_earning_cap),
+    Number(p.duration_days),
+  );
+});
+
+if (drifted.length > 0) {
+  console.log(
+    `\n  ⚠ ${drifted.length} card(s) print their own numbers, and they disagree with the columns:\n`,
+  );
+  for (const p of drifted) {
+    const match = GENERATED_DESCRIPTION.exec(p.description);
+    console.log(`      ${String(p.name).padEnd(26)} text ${match[2].padStart(11)}, ${match[3].padStart(3)} days`);
+    console.log(
+      `      ${"".padEnd(26)} fact ${grouped(Number(p.lifetime_earning_cap)).padStart(11)}, ${String(p.duration_days).padStart(3)} days`,
+    );
+  }
+  console.log(`\n      repair with --fix-descriptions (only generated text is rewritten)\n`);
+}
+
+if (FIX_DESCRIPTIONS) {
+  if (drifted.length === 0) {
+    console.log("\n  · every generated description already matches its figures — nothing to repair\n");
+  } else if (!APPLY) {
+    console.log(`  · dry run — nothing was written. Re-run with --fix-descriptions --apply\n`);
+  } else {
+    for (const p of drifted) {
+      await patch(`packages?id=eq.${p.id}`, {
+        description: describeTerms(
+          Number(p.daily_earning_cap),
+          Number(p.lifetime_earning_cap),
+          Number(p.duration_days),
+        ),
+      });
+      console.log(`  ✓ repaired ${p.name}`);
+    }
+  }
+  if (!spec) process.exit(0);
+}
+
 if (!spec) {
   console.log(
     "\n  · report only — pass --terms to change anything.\n" +
-      "    e.g. --terms=\"ACTIVE:800:14:952;ACTIVE:2500:20:3000;DRAFT:2500:30:3400\"\n\n" +
+      "    e.g. --terms=\"ACTIVE:800:14:952;ACTIVE:2500:20:3000;DRAFT:2500:30:3400\"\n" +
+      "    or --fix-descriptions to repair a card whose text contradicts its figures.\n\n" +
       "    \"reachable\" is videos x reward x days. A row below 100% cannot pay what it\n" +
       "    advertises, however the total is worded. Fix it by funding the campaign,\n" +
       "    raising daily_limit, allocating more videos, or lowering the total.\n",
@@ -290,22 +380,42 @@ if (!APPLY) {
 /* -------------------------------------------------------------------------- */
 
 let written = 0;
+let described = 0;
 for (const item of plan) {
   const unchanged =
     Number(item.package.duration_days) === item.days &&
     Number(item.package.daily_earning_cap) === item.daily &&
     Number(item.package.lifetime_earning_cap) === item.total;
-  if (unchanged) continue;
 
-  await patch(`packages?id=eq.${item.package.id}`, {
+  /*
+    The description travels with the figures, so a re-priced tier never keeps a
+    sentence describing what it used to pay — including when only the sentence is
+    stale. Skipping on `unchanged` alone is what let the drift happen before.
+  */
+  const patchBody = {
     duration_days: item.days,
     daily_earning_cap: item.daily,
     lifetime_earning_cap: item.total,
-  });
-  written += 1;
+  };
+
+  if (generatedDescription(item.package.description)) {
+    const wanted = describeTerms(item.daily, item.total, item.days);
+    if (item.package.description !== wanted) {
+      patchBody.description = wanted;
+      described += 1;
+    }
+  }
+
+  if (unchanged && patchBody.description === undefined) continue;
+
+  await patch(`packages?id=eq.${item.package.id}`, patchBody);
+  if (!unchanged) written += 1;
 }
 
-console.log(`  ✓ set terms on ${written} tier(s) (${plan.length - written} already matched)`);
+console.log(
+  `  ✓ set terms on ${written} tier(s) (${plan.length - written} already matched)` +
+    (described > 0 ? `, rewrote ${described} generated description(s) to match` : ""),
+);
 
 /*
   Existing purchases are untouched on purpose. `user_packages` snapshots the cap

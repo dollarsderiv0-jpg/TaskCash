@@ -2,6 +2,11 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 import { getSetting } from "@/lib/settings";
+import {
+  describePackageTerms,
+  describesRealTerms,
+  isGeneratedDescription,
+} from "@/lib/packages/terms";
 import type { Package, PackageWithUsage, UserPackage } from "@/lib/types";
 
 /**
@@ -436,9 +441,39 @@ export async function upsertPackage(input: {
 }) {
   const admin = createAdminSupabaseClient();
 
+  /*
+    The summary sentence follows the figures it describes.
+
+    The form edits the caps and the description as independent fields, so an
+    operator who raised a cap and left the sentence alone used to publish a card
+    stating two different offers at once — the same contradiction that migration
+    0014's seed sentence produced when the terms were moved without it. A sentence
+    in the generated form is therefore rebuilt from the figures in this same
+    write; copy a person wrote is not in that form and is passed through
+    untouched, blank included.
+  */
+  const suppliedDescription =
+    typeof input.payload.description === "string" ? input.payload.description.trim() : "";
+
+  const terms = {
+    dailyEarningCap: input.payload.dailyEarningCap,
+    lifetimeEarningCap: input.payload.lifetimeEarningCap ?? null,
+    durationDays: input.payload.durationDays ?? null,
+  };
+
+  const description =
+    (suppliedDescription.length === 0 || isGeneratedDescription(suppliedDescription)) &&
+    describesRealTerms(terms)
+      ? describePackageTerms({
+          dailyEarningCap: terms.dailyEarningCap as number,
+          lifetimeEarningCap: terms.lifetimeEarningCap as number,
+          durationDays: terms.durationDays as number,
+        })
+      : suppliedDescription || null;
+
   const record = {
     name: input.payload.name,
-    description: input.payload.description ?? null,
+    description,
     price: input.payload.price,
     currency: input.payload.currency,
     daily_earning_cap: input.payload.dailyEarningCap,
