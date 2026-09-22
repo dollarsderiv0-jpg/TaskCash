@@ -176,6 +176,19 @@ export type Deposit = {
   wallet_transaction_id: string | null;
   created_at: string;
   completed_at: string | null;
+  /**
+   * Set when this deposit is payment for a package rather than a wallet top-up
+   * (migration 0019). The amount is then the tier's price, and settlement
+   * activates it.
+   *
+   * `package_activated_at` is the proof that the activation actually happened:
+   * COMPLETED + a `package_id` + a NULL `package_activated_at` is a payment whose
+   * credit landed but whose package has not been activated yet, which is the
+   * state a crash between the two leaves and the state settlement repairs.
+   */
+  package_id: string | null;
+  package_activated_at: string | null;
+  package_purchase_id: string | null;
 };
 
 export type Withdrawal = {

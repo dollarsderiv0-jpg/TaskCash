@@ -136,6 +136,13 @@ export const amountSchema = z
   .positive("Enter an amount greater than zero.")
   .max(100_000_000, "That amount is too large.");
 
+/*
+  Declared here rather than next to the admin schemas further down, because the
+  deposit schema below is the first user of it — a `const` referenced above its
+  own declaration is a TDZ error at module load, not a type error.
+*/
+export const idSchema = z.string().uuid("That identifier is not valid.");
+
 export const depositCreateSchema = z.object({
   amount: amountSchema,
   phone: phoneSchema,
@@ -143,6 +150,16 @@ export const depositCreateSchema = z.object({
   acceptTerms: z.literal(true, {
     errorMap: () => ({ message: "Please confirm the deposit authorisation." }),
   }),
+  /*
+    Set when this payment buys a package rather than topping up the wallet.
+
+    Deliberately NOT paired with an amount the client may choose: `amount` above
+    is still validated for shape, but `createDeposit` discards it and charges the
+    tier's own price when this is present. A client that sends a package id and a
+    lower amount gets the tier's price or an error, never the amount it asked for
+    — which is the only way "pay for this package" can be safe to expose.
+  */
+  packageId: idSchema.optional(),
 });
 export type DepositCreateInput = z.infer<typeof depositCreateSchema>;
 
@@ -190,7 +207,6 @@ export const appInstallSchema = z.object({
 /* Admin                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export const idSchema = z.string().uuid("That identifier is not valid.");
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

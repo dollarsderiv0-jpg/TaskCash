@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
-import { logger, logPaymentFailure } from "@/lib/logger";
+import { logger, logPaymentFailure, describeError } from "@/lib/logger";
 import { normalisePhone, networkCodeForPhone } from "@/lib/countries";
 import { formatMoney } from "@/lib/money/format";
 // Provider-agnostic: which gateway collects depends on PAYMENTS_PROVIDER, and
@@ -15,6 +15,12 @@ import {
 } from "@/lib/payments/provider";
 import { missingProviderEnv } from "@/lib/env";
 import { getPublicSettings } from "@/lib/settings";
+/*
+  A deposit can be payment for a package (migration 0019). The price is read from
+  the tier and the activation runs through the same `package_purchase` a wallet
+  purchase uses, so M-Pesa and wallet buyers are governed by one set of rules.
+*/
+import { purchasePackage, resolvePayableTier } from "@/server/services/packages";
 import { effectiveDepositBounds, type DepositBounds } from "@/lib/money/limits";
 import type { Deposit, Profile, Wallet } from "@/lib/types";
 import type { ProviderResult } from "@/lib/payments/types";
@@ -43,6 +49,8 @@ export type CreateDepositResult = {
   phone: string;
   status: string;
   message: string;
+  /** The tier this payment buys, when it is a package payment rather than a top-up. */
+  packageName?: string | null;
 };
 
 /**
@@ -283,6 +291,12 @@ export async function createDeposit(input: {
   phone: string;
   idempotencyKey: string;
   ipHash: string | null;
+  /**
+   * Set when this payment is for a package rather than a wallet top-up. The
+   * amount is then the tier's price, read here from the package row — the
+   * request's own `amount` is ignored, so a buyer cannot name their own price.
+   */
+  packageId?: string | null;
 }): Promise<CreateDepositResult> {
   const admin = createAdminSupabaseClient();
 
@@ -291,12 +305,38 @@ export async function createDeposit(input: {
     throw new ApiError("INVALID_PHONE", normalised.reason, 422);
   }
 
+  /*
+    Resolved BEFORE any row is written, so a tier that is not on sale, is priced
+    in another currency, or is already held produces one honest error and leaves
+    no deposit in the customer's history to explain away.
+  */
+  const tier = input.packageId
+    ? await resolvePayableTier({
+        userId: input.profile.id,
+        packageId: input.packageId,
+        currency: input.wallet.currency,
+      })
+    : null;
+
+  const amount = tier ? tier.price : input.amount;
+
   // Amounts are validated against the currency's configured bounds, never a
   // client-supplied limit — and from the same source the page renders from, so
   // the two cannot disagree.
   const bounds = await getDepositBounds(input.wallet.currency);
 
-  if (input.amount < bounds.min) {
+  /*
+    Only a top-up is held to the deposit floor.
+
+    `currencies.min_deposit` exists to stop tiny top-ups — a KES 10 deposit costs
+    more to process than it moves. A package payment is never tiny and its amount
+    is chosen by nobody: it is the tier's own price. Applying the floor to it
+    would refuse a legitimately priced package the day an operator prices one
+    below the floor, and the floor would be protecting nothing. The ceiling still
+    applies: it is a sanity bound on what one payment may move, and a package
+    priced above it is a mistake worth refusing.
+  */
+  if (!tier && amount < bounds.min) {
     throw new ApiError(
       "BELOW_MINIMUM",
       `The minimum deposit is ${formatMoney(bounds.min, input.wallet.currency)}.`,
@@ -304,7 +344,7 @@ export async function createDeposit(input: {
     );
   }
 
-  if (input.amount > bounds.max) {
+  if (amount > bounds.max) {
     throw new ApiError(
       "ABOVE_MAXIMUM",
       `The maximum single deposit is ${formatMoney(bounds.max, input.wallet.currency)}.`,
@@ -376,13 +416,14 @@ export async function createDeposit(input: {
     .insert({
       user_id: input.profile.id,
       wallet_id: input.wallet.id,
-      amount: input.amount,
+      amount,
       currency: input.wallet.currency,
       phone: normalised.e164,
       provider: paymentProviderId(),
       merchant_reference: merchantReference,
       status: "PENDING",
       idempotency_key: input.idempotencyKey,
+      package_id: tier?.id ?? null,
     })
     .select("*")
     .single<Deposit>();
@@ -405,9 +446,11 @@ export async function createDeposit(input: {
     const result = await initiateCollection({
       merchantReference,
       phone: normalised.e164,
-      amount: input.amount,
+      amount,
       currency: input.wallet.currency,
-      description: `TaskCash deposit ${merchantReference}`,
+      description: tier
+        ? `TaskCash ${tier.name} ${merchantReference}`
+        : `TaskCash deposit ${merchantReference}`,
       networkCode: networkCodeForPhone(normalised.e164, input.profile.country),
     });
 
@@ -463,13 +506,16 @@ export async function createDeposit(input: {
     return {
       depositId: deposit.id,
       merchantReference,
-      amount: input.amount,
+      amount,
       currency: input.wallet.currency,
       phone: normalised.e164,
       status: "PENDING",
-      message:
-        "Deposit request sent. Approve the payment prompt on your phone to complete it. " +
-        "Your wallet is only credited once the payment is confirmed.",
+      packageName: tier?.name ?? null,
+      message: tier
+        ? `${tier.name} payment request sent. Approve the M-Pesa prompt on your phone ` +
+          "and the package activates as soon as the payment is confirmed."
+        : "Deposit request sent. Approve the payment prompt on your phone to complete it. " +
+          "Your wallet is only credited once the payment is confirmed.",
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -602,6 +648,13 @@ export type VerifyDepositOutcome = {
   amount: number;
   currency: string;
   message: string;
+  /**
+   * The package this payment activated, when it bought one. Null on a wallet
+   * top-up, and on a package payment whose activation has not happened yet —
+   * which is a state the caller must be able to tell apart from "not a package
+   * payment", so it is null-vs-object rather than a boolean.
+   */
+  packageActivated?: { packageName: string } | null;
 };
 
 /**
@@ -662,6 +715,130 @@ async function recordProviderResult(
 }
 
 /**
+ * Whether a purchase was refused because the tier is already held.
+ *
+ * The token has to be read out of the MESSAGE, not the code. `package_purchase`
+ * raises `PACKAGE_ALREADY_ACTIVE` as a Postgres exception, so PostgREST answers
+ * `{ message: "PACKAGE_ALREADY_ACTIVE", code: "P0001" }` — the token in the
+ * message, and the code left as the generic raise class. Two ways to get this
+ * wrong, and the first version of this function managed both at once: matching on
+ * `code` never fires against a real database, and reaching the message through
+ * `instanceof Error` finds nothing at all, because that response is a plain
+ * object. It passed a stub that set the code and would have done nothing in
+ * production.
+ */
+function isAlreadyActiveError(error: unknown): boolean {
+  if (providerErrorCode(error) === "PACKAGE_ALREADY_ACTIVE") return true;
+
+  // Same widening the shared error mapper uses to find a raised token, so this
+  // matches what `toApiError` matches.
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error ?? "");
+
+  return message.includes("PACKAGE_ALREADY_ACTIVE");
+}
+
+/**
+ * What happened to the package a payment was for.
+ *
+ * Three outcomes rather than a boolean, because the caller has to SAY something
+ * different for each and two of them are easy to conflate: a package that was
+ * already active is not a failure (the buyer has what they paid for and the credit
+ * is in their wallet), while an activation that was refused is a real problem they
+ * need to act on. `null` means there was nothing to do — either the payment was a
+ * wallet top-up, or its package was activated on an earlier call.
+ */
+type PackageActivation =
+  | { kind: "ACTIVATED"; packageName: string }
+  | { kind: "ALREADY_HELD" }
+  | { kind: "FAILED" }
+  | null;
+
+/**
+ * Activates the package a deposit paid for.
+ *
+ * Only ever called once the wallet credit is durably recorded, and safe to call
+ * again: it no-ops when the deposit already carries `package_activated_at`, and
+ * `package_purchase` holds an advisory lock of its own.
+ *
+ * It never throws. By the time it runs the money decision is made and recorded;
+ * a failed activation must not turn a settled payment into an error response, nor
+ * make the provider retry a callback it has already delivered successfully. What
+ * it must not do either is fail quietly — a failure leaves
+ * `package_activated_at` NULL, which is the flag the repair path in
+ * `verifyAndSettleDeposit` reads, so the very next question about this deposit
+ * tries again.
+ */
+async function activateDepositPackage(
+  deposit: Deposit,
+  admin: ReturnType<typeof createAdminSupabaseClient>,
+): Promise<PackageActivation> {
+  if (!deposit.package_id || deposit.package_activated_at) return null;
+
+  const markActivated = async (purchaseId: string | null) => {
+    await admin
+      .from("deposits")
+      .update({
+        package_activated_at: new Date().toISOString(),
+        package_purchase_id: purchaseId,
+      })
+      .eq("id", deposit.id);
+  };
+
+  try {
+    const purchase = await purchasePackage({
+      userId: deposit.user_id,
+      packageId: deposit.package_id,
+    });
+
+    await markActivated(purchase.purchaseId);
+
+    logger.info("deposit_package_activated", {
+      depositId: deposit.id,
+      packageId: deposit.package_id,
+      purchaseId: purchase.purchaseId,
+    });
+
+    return { kind: "ACTIVATED", packageName: purchase.packageName };
+  } catch (error) {
+    const code = providerErrorCode(error);
+
+    /*
+      The tier is already held.
+
+      Reachable when the buyer bought the same package another way between the
+      payment request and its confirmation. Charging them again would be wrong
+      and retrying forever would only fill the log — the package they paid for is
+      active either way, and the credit is in their wallet to spend, so this is
+      recorded as satisfied and stated as the exception it is.
+    */
+    if (isAlreadyActiveError(error)) {
+      await markActivated(null);
+
+      logger.warn("deposit_package_already_held", {
+        depositId: deposit.id,
+        packageId: deposit.package_id,
+      });
+
+      return { kind: "ALREADY_HELD" };
+    }
+
+    logger.error("deposit_package_activation_failed", {
+      depositId: deposit.id,
+      packageId: deposit.package_id,
+      code,
+      error: describeError(error),
+    });
+
+    return { kind: "FAILED" };
+  }
+}
+
+/**
  * Confirms a deposit against the provider and settles it exactly once.
  */
 export async function verifyAndSettleDeposit(
@@ -670,13 +847,28 @@ export async function verifyAndSettleDeposit(
   const admin = createAdminSupabaseClient();
 
   if (deposit.status === "COMPLETED") {
+    /*
+      The repair path.
+
+      A deposit that is COMPLETED but whose package was never activated is the
+      state a crash between the credit and the activation leaves behind — and
+      because the credit is the lock that decides who may activate, no other
+      caller will ever finish the job. Asking about the deposit again is the
+      natural moment to do it, and it is free when there is nothing to repair.
+    */
+    const repaired = await activateDepositPackage(deposit, admin);
+
     return {
       status: "COMPLETED",
       credited: false,
       duplicate: true,
       amount: Number(deposit.amount),
       currency: deposit.currency,
-      message: "This deposit has already been credited to your wallet.",
+      packageActivated: repaired?.kind === "ACTIVATED" ? { packageName: repaired.packageName } : null,
+      message:
+        repaired?.kind === "ACTIVATED"
+          ? `${repaired.packageName} is now active.`
+          : "This deposit has already been credited to your wallet.",
     };
   }
 
@@ -725,15 +917,59 @@ export async function verifyAndSettleDeposit(
     // Referral commission and deposit bonus are now handled inside
     // deposit_credit RPC (migration 0015), so no separate call needed.
 
+    /*
+      Activate the package THIS payment bought — but only if this call is the one
+      that recorded the credit.
+
+      `deposit_credit` is the lock that decides ownership of a settlement, and it
+      reports every caller it turned away as `duplicate`. Gating on `credited`
+      therefore means a replayed callback, a second poll and a reconciliation
+      sweep that all reach the same deposit cannot buy the package more than once:
+      exactly one of them sees `credited`, and only that one activates.
+    */
+    const activation = row?.credited
+      ? await activateDepositPackage(deposit, admin)
+      : null;
+
+    const creditedMessage =
+      "Deposit confirmed and credited to your wallet." +
+      (row?.bonus_amount
+        ? " Plus a bonus of KES " + Number(row.bonus_amount).toLocaleString() + "!"
+        : "");
+
+    /*
+      Every outcome gets its own sentence, because they are not interchangeable
+      and two of them are the ones worth getting right:
+
+        · activated     — say so, and nothing else
+        · already held  — the buyer has the package and their money back in the
+                          wallet; reporting this as a failure would send them to
+                          support over nothing
+        · failed        — the money is safely in the wallet but the package is
+                          NOT active, and claiming success would leave them
+                          waiting for something that is not coming
+    */
+    const message =
+      activation?.kind === "ACTIVATED"
+        ? `${activation.packageName} is now active.`
+        : activation?.kind === "ALREADY_HELD"
+          ? "This package was already active on your account, so the payment was " +
+            "credited to your wallet instead of buying a second one."
+          : activation?.kind === "FAILED"
+            ? "Your payment was confirmed, but the package could not be activated. " +
+              "The money is in your wallet — please activate the package from the " +
+              "Packages page, and contact support if it is refused."
+            : creditedMessage;
+
     return {
       status: "COMPLETED",
       credited: Boolean(row?.credited),
       duplicate: Boolean(row?.duplicate),
       amount: Number(deposit.amount),
       currency: deposit.currency,
-      message: "Deposit confirmed and credited to your wallet." +
-        (row?.bonus_amount ? " Plus a bonus of KES " +
-          Number(row.bonus_amount).toLocaleString() + "!" : ""),
+      packageActivated:
+        activation?.kind === "ACTIVATED" ? { packageName: activation.packageName } : null,
+      message,
     };
   }
 

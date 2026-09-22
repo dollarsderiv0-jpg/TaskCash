@@ -2,12 +2,21 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Clock, Lock, Package as PackageIcon, Sparkles } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  Lock,
+  Package as PackageIcon,
+  RefreshCw,
+  Smartphone,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox, Field, Input } from "@/components/ui/fields";
 import { Alert, Badge, EmptyState, Progress } from "@/components/ui/misc";
 import { useToast } from "@/components/ui/toast";
-import { apiRequest } from "@/lib/client/api";
+import { apiRequest, newIdempotencyKey } from "@/lib/client/api";
 import { useCountdown } from "@/lib/client/use-countdown";
 import { formatMoney } from "@/lib/money/format";
 import type { DepositBonusTier } from "@/server/services/packages";
@@ -141,16 +150,292 @@ function AllowanceCard({ tier, currency }: { tier: PackageWithUsage; currency: s
   );
 }
 
+type PackagePaymentResult = {
+  depositId: string;
+  merchantReference: string;
+  amount: number;
+  currency: string;
+  phone: string;
+  status: string;
+  message: string;
+  packageName: string | null;
+};
+
+type PackagePaymentStatus = {
+  status: string;
+  credited: boolean;
+  duplicate: boolean;
+  message: string;
+  paymentStatus: string;
+  packageActivated?: { packageName: string } | null;
+};
+
+/**
+ * Pay for a package directly by M-Pesa.
+ *
+ * The rule this component is built around: a successful request means an STK
+ * prompt was SENT, and that is all it means. The package is stated as active only
+ * when the server says the provider confirmed the payment AND that the activation
+ * happened — `packageActivated` on the verify response, never a status this
+ * component interprets for itself. The two are told apart deliberately: a
+ * confirmed payment whose activation failed is a real outcome, and reporting it
+ * as success would leave the buyer waiting for a package that is not coming.
+ *
+ * The price shown is the tier's; the amount sent is for shape only, and the
+ * server discards it in favour of the package row's own price.
+ */
+function PayByMpesa({
+  tier,
+  currency,
+  defaultPhone,
+  onActivated,
+  collapsed,
+}: {
+  tier: PackageWithUsage;
+  currency: string;
+  defaultPhone: string;
+  onActivated: () => void;
+  /** True when the wallet can already cover the price, so M-Pesa starts folded away. */
+  collapsed: boolean;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(!collapsed);
+  const [phone, setPhone] = React.useState(defaultPhone);
+  const [authorised, setAuthorised] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+  const [checking, setChecking] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState<PackagePaymentResult | null>(null);
+
+  const settle = React.useCallback(
+    (result: PackagePaymentStatus) => {
+      if (result.status === "COMPLETED") {
+        setPending(null);
+        toast({
+          title: result.packageActivated
+            ? `${result.packageActivated.packageName} is now active`
+            : "Payment confirmed",
+          description: result.message,
+          tone: "success",
+        });
+        // Re-read the authoritative balance and allowance from the server rather
+        // than adjusting anything locally.
+        onActivated();
+        return;
+      }
+
+      toast({
+        title:
+          result.status === "PENDING"
+            ? "Still waiting on the provider"
+            : "Payment not completed",
+        description: result.message,
+        tone: result.status === "PENDING" ? "info" : "warning",
+      });
+
+      // A terminal outcome is finished; PENDING keeps the prompt on screen so
+      // the buyer can approve late rather than re-raising a second prompt.
+      if (result.status !== "PENDING") setPending(null);
+    },
+    [onActivated, toast],
+  );
+
+  async function verify(depositId: string) {
+    setChecking(true);
+
+    const response = await apiRequest<PackagePaymentStatus>("/api/deposits/verify", {
+      method: "POST",
+      body: { depositId },
+    });
+
+    setChecking(false);
+
+    if (!response.ok) {
+      toast({ title: "Could not check yet", description: response.message, tone: "warning" });
+      return;
+    }
+
+    settle(response.data);
+  }
+
+  /*
+    Poll while a prompt is open.
+
+    A confirmation usually lands within seconds of the buyer entering their PIN,
+    and the alternative is someone staring at a screen that tells them nothing.
+    Bounded to 15 attempts at 6 seconds — comfortably inside the verify
+    endpoint's 30-per-10-minutes allowance — so a prompt that is never answered
+    costs a handful of requests instead of a rate limit. The interval reads
+    `pending.depositId` and not the component's other state, so it cannot be torn
+    down and re-created on every render before its first tick ever fires.
+  */
+  React.useEffect(() => {
+    if (!pending) return;
+
+    let attempts = 0;
+
+    const id = window.setInterval(() => {
+      attempts += 1;
+      if (attempts > 15) {
+        window.clearInterval(id);
+        return;
+      }
+
+      void apiRequest<PackagePaymentStatus>("/api/deposits/verify", {
+        method: "POST",
+        body: { depositId: pending.depositId },
+      }).then((response) => {
+        if (response.ok) settle(response.data);
+      });
+    }, 6000);
+
+    return () => window.clearInterval(id);
+  }, [pending, settle]);
+
+  async function pay(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+
+    if (phone.trim().length < 7) {
+      setError("Enter the M-Pesa number to charge.");
+      return;
+    }
+    if (!authorised) {
+      setError("Please confirm you authorise this payment.");
+      return;
+    }
+
+    setLoading(true);
+
+    const response = await apiRequest<PackagePaymentResult>("/api/deposits/create", {
+      method: "POST",
+      // One key per attempt, so a double-tap or a retry cannot raise two prompts.
+      body: {
+        packageId: tier.id,
+        amount: tier.price,
+        phone: phone.trim(),
+        idempotencyKey: newIdempotencyKey("package-payment"),
+        acceptTerms: true,
+      },
+    });
+
+    setLoading(false);
+
+    if (!response.ok) {
+      setError(response.message);
+      return;
+    }
+
+    setPending(response.data);
+    setAuthorised(false);
+    toast({
+      title: "Check your phone and enter your M-Pesa PIN",
+      description:
+        `Approve ${formatMoney(response.data.amount, response.data.currency)} sent to ` +
+        `${response.data.phone}. ${tier.name} activates as soon as the payment is confirmed.`,
+      tone: "info",
+    });
+  }
+
+  if (!open) {
+    return (
+      <Button variant="outline" className="w-full" onClick={() => setOpen(true)}>
+        <Smartphone className="h-4 w-4" aria-hidden />
+        Or pay {formatMoney(tier.price, currency)} by M-Pesa
+      </Button>
+    );
+  }
+
+  if (pending) {
+    return (
+      <Alert variant="info" title="Check your phone and enter your M-Pesa PIN">
+        <div className="space-y-3">
+          <p>
+            A payment prompt for {formatMoney(pending.amount, pending.currency)} was sent to{" "}
+            {pending.phone}. {tier.name} activates as soon as the provider confirms the payment — this
+            page checks by itself.
+          </p>
+          <p className="font-mono text-[11px]">Reference {pending.merchantReference}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => verify(pending.depositId)} loading={checking}>
+              <RefreshCw className="h-4 w-4" aria-hidden />
+              I have paid — check now
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setPending(null)}>
+              Done
+            </Button>
+          </div>
+        </div>
+      </Alert>
+    );
+  }
+
+  return (
+    <form onSubmit={pay} className="space-y-3" noValidate>
+      {error ? (
+        <p className="text-xs font-medium text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      <Field label="M-Pesa number" htmlFor={`mpesa-phone-${tier.id}`}>
+        <Input
+          id={`mpesa-phone-${tier.id}`}
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="07XXXXXXXX"
+          value={phone}
+          onChange={(event) => setPhone(event.target.value)}
+        />
+      </Field>
+
+      <label className="flex items-start gap-3 text-xs">
+        <Checkbox
+          checked={authorised}
+          onCheckedChange={(checked) => setAuthorised(checked === true)}
+          className="mt-0.5"
+        />
+        <span className="leading-relaxed text-muted-foreground">
+          I authorise a payment of{" "}
+          <strong className="text-foreground">{formatMoney(tier.price, currency)}</strong> to be
+          collected from my M-Pesa account via our payment partner. I understand this is a payment for
+          platform services and is not an investment.
+        </span>
+      </label>
+
+      <Button type="submit" className="w-full" size="lg" loading={loading}>
+        <Smartphone className="h-4 w-4" aria-hidden />
+        Pay {formatMoney(tier.price, currency)} with M-Pesa
+      </Button>
+
+      {collapsed ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full"
+          onClick={() => setOpen(false)}
+        >
+          Use my wallet balance instead
+        </Button>
+      ) : null}
+    </form>
+  );
+}
+
 function TierCard({
   tier,
   currency,
   balance,
+  defaultPhone,
   bonusTiers,
   onPurchased,
 }: {
   tier: PackageWithUsage;
   currency: string;
   balance: number;
+  defaultPhone: string;
   bonusTiers: DepositBonusTier[];
   onPurchased: () => void;
 }) {
@@ -318,18 +603,43 @@ function TierCard({
             </Alert>
           ) : (
             <div className="space-y-3">
-              <Button className="w-full" size="lg" loading={loading} onClick={buy} disabled={!affordable}>
-                <Sparkles className="h-4 w-4" aria-hidden />
-                {affordable
-                  ? `Activate for ${formatMoney(tier.price, currency)}`
-                  : "Not enough balance"}
-              </Button>
-              <p className="text-center text-xs text-muted-foreground">
-                Paid from your wallet balance ({formatMoney(balance, currency)} available).
-              </p>
+              {affordable ? (
+                <>
+                  <Button className="w-full" size="lg" loading={loading} onClick={buy}>
+                    <Sparkles className="h-4 w-4" aria-hidden />
+                    {`Activate for ${formatMoney(tier.price, currency)}`}
+                  </Button>
+                  <p className="text-center text-xs text-muted-foreground">
+                    Paid from your wallet balance ({formatMoney(balance, currency)} available).
+                  </p>
+                </>
+              ) : null}
+
+              {/*
+                M-Pesa, for the buyer whose wallet cannot cover the price — which
+                is everyone who has not been paid yet.
+
+                This replaced a disabled button reading "Not enough balance" and a
+                line saying how much more was needed. Both were true and neither
+                was useful: they named a shortfall and offered no way to close it,
+                so the only route to a package ran through the deposit page and a
+                second decision. The shortfall is deliberately NOT offered as a
+                pay-this-much button — a top-up of the difference is usually below
+                the currency's own KES 800 deposit floor, which the server would
+                refuse. Paying the package price is the amount that is always valid.
+              */}
+              <PayByMpesa
+                tier={tier}
+                currency={currency}
+                defaultPhone={defaultPhone}
+                onActivated={onPurchased}
+                collapsed={affordable}
+              />
+
               {!affordable ? (
-                <p className="text-center text-xs font-medium text-destructive">
-                  You need {formatMoney(tier.price - balance, currency)} more in your wallet.
+                <p className="text-center text-xs text-muted-foreground">
+                  Your wallet has {formatMoney(balance, currency)}. Pay the package price directly from
+                  M-Pesa and {tier.name} activates itself once the payment clears.
                 </p>
               ) : null}
             </div>
@@ -344,14 +654,24 @@ export function PackagesCatalogue({
   tiers,
   currency,
   balance,
+  defaultPhone,
   bonusTiers,
 }: {
   tiers: PackageWithUsage[];
   currency: string;
   balance: number;
+  /** The number on the profile, pre-filled into the M-Pesa prompt — editable. */
+  defaultPhone: string;
   bonusTiers: DepositBonusTier[];
 }) {
   const router = useRouter();
+
+  /*
+    Stable identity, because it is a dependency of the payment component's polling
+    effect: a new function every render would tear that interval down before its
+    first tick and no payment would ever be seen to complete.
+  */
+  const refresh = React.useCallback(() => router.refresh(), [router]);
 
   if (tiers.length === 0) {
     return (
@@ -371,8 +691,9 @@ export function PackagesCatalogue({
           tier={tier}
           currency={currency}
           balance={balance}
+          defaultPhone={defaultPhone}
           bonusTiers={bonusTiers}
-          onPurchased={() => router.refresh()}
+          onPurchased={refresh}
         />
       ))}
     </div>

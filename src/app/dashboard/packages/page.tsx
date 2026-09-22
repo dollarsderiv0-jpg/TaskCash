@@ -94,6 +94,7 @@ export default async function PackagesPage() {
           tiers={tiers}
           currency={currency}
           balance={balance}
+          defaultPhone={session.profile.phone ?? ""}
           bonusTiers={bonusTiers}
         />
       )}

@@ -58,7 +58,8 @@
     "deploy:env": "node scripts/vercel-env-sync.mjs",
     "check:live": "node .freebuff/vercel-live-check.mjs",
     "check:egress": "node scripts/check-egress.mjs",
-    "test:deposit-refusal": "npx tsc -p .freebuff/deposit-refusal-test/tsconfig.json && node .freebuff/deposit-refusal-test/run.mjs"
+    "test:deposit-refusal": "npx tsc -p .freebuff/deposit-refusal-test/tsconfig.json && node .freebuff/deposit-refusal-test/run.mjs",
+    "test:package-payment": "node .freebuff/package-payment-check.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.3",

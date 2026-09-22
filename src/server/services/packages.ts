@@ -278,6 +278,85 @@ export async function purchasePackage(input: {
   };
 }
 
+/**
+ * The tier a direct M-Pesa payment is for, and the price to charge for it.
+ *
+ * This exists so that "pay for this package with M-Pesa" cannot be talked into
+ * charging the wrong amount. The price is read from the package row HERE and
+ * nowhere else: the request carries a package id and no amount, because a
+ * client-supplied amount is the one field that would let a buyer pay KES 10 for
+ * a KES 7,500 tier.
+ *
+ * The refusals mirror `package_purchase` exactly, so a tier that cannot be
+ * bought from a wallet balance cannot be bought by M-Pesa either — and the
+ * refusal arrives before a deposit row is written, so a rejected request leaves
+ * no payment in the customer's history.
+ */
+export async function resolvePayableTier(input: {
+  userId: string;
+  packageId: string;
+  currency: string;
+}): Promise<{ id: string; name: string; price: number; currency: string }> {
+  const admin = createAdminSupabaseClient();
+
+  const { data: tier, error } = await admin
+    .from("packages")
+    .select("id, name, price, currency, daily_earning_cap, status")
+    .eq("id", input.packageId)
+    .maybeSingle<Package>();
+
+  if (error) throw error;
+
+  if (!tier) {
+    throw new ApiError("PACKAGE_NOT_FOUND", "That package could not be found.", 404);
+  }
+
+  /*
+    DRAFT and PAUSED alike: `listPackageCatalogue` shows only ACTIVE tiers, so a
+    tier refused here is one the buyer could not have seen anyway. Checked
+    server-side rather than trusted from the page, because the id is the only
+    thing the request carries and an id is trivial to guess from the catalogue.
+  */
+  if (tier.status !== "ACTIVE" || num(tier.daily_earning_cap) <= 0) {
+    throw new ApiError(
+      "PACKAGE_NOT_AVAILABLE",
+      "This package is not available right now. Please check back shortly.",
+      409,
+    );
+  }
+
+  if (tier.currency !== input.currency) {
+    throw new ApiError(
+      "PACKAGE_CURRENCY_MISMATCH",
+      "This package is priced in a different currency than your wallet.",
+      409,
+    );
+  }
+
+  const price = num(tier.price);
+  if (!(price > 0)) {
+    throw new ApiError(
+      "PACKAGE_NOT_AVAILABLE",
+      "This package is not available right now. Please check back shortly.",
+      409,
+    );
+  }
+
+  const { data: held } = await admin
+    .from("user_packages")
+    .select("id")
+    .eq("user_id", input.userId)
+    .eq("package_id", input.packageId)
+    .eq("status", "ACTIVE")
+    .maybeSingle<{ id: string }>();
+
+  if (held) {
+    throw new ApiError("PACKAGE_ALREADY_ACTIVE", "You already have this package active.", 409);
+  }
+
+  return { id: tier.id, name: tier.name, price, currency: tier.currency };
+}
+
 /* -------------------------------------------------------------------------- */
 /* admin                                                                      */
 /* -------------------------------------------------------------------------- */
