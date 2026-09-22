@@ -102,7 +102,12 @@ export async function listAvailableVideos(
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from("video_watch_sessions")
-      .select("video_id, status, rewarded_at")
+      /*
+        `package_id` is part of the key, not just the row: since 0020 a video can
+        be watched once per PACKAGE per day, so counting by video alone would
+        show a buyer their second tier as already spent.
+      */
+      .select("video_id, status, rewarded_at, package_id")
       .eq("user_id", userId)
       .eq("status", "REWARDED")
       .gte("rewarded_at", startOfToday.toISOString()),
@@ -113,7 +118,7 @@ export async function listAvailableVideos(
     */
     supabase
       .from("package_videos")
-      .select("video_id, package_id")
+      .select("video_id, package_id, reward_amount")
       .in(
         "video_id",
         list.map((v) => v.id),
@@ -129,9 +134,19 @@ export async function listAvailableVideos(
     ((campaignsRes.data ?? []) as VideoCampaign[]).map((c) => [c.id, c]),
   );
 
+  /*
+    Counted per (video, package).
+
+    The database's per-video daily limit is now scoped to the package, so the
+    page must count the same way or it would tell a buyer holding two tiers that
+    their second one is spent when the database will happily pay it. A video in
+    no package keys on the empty string and behaves exactly as before.
+  */
   const rewardedToday = new Map<string, number>();
-  for (const row of (sessionsRes.data ?? []) as { video_id: string }[]) {
-    rewardedToday.set(row.video_id, (rewardedToday.get(row.video_id) ?? 0) + 1);
+  const sessionKey = (videoId: string, packageId: string | null) => `${videoId}:${packageId ?? ""}`;
+  for (const row of (sessionsRes.data ?? []) as { video_id: string; package_id: string | null }[]) {
+    const key = sessionKey(row.video_id, row.package_id);
+    rewardedToday.set(key, (rewardedToday.get(key) ?? 0) + 1);
   }
 
   const now = Date.now();
@@ -140,9 +155,26 @@ export async function listAvailableVideos(
   /* package context                                                           */
   /* ------------------------------------------------------------------------ */
 
-  const packageByVideo = new Map<string, string>();
-  for (const row of (packageLinksRes.data ?? []) as { video_id: string; package_id: string }[]) {
-    packageByVideo.set(row.video_id, row.package_id);
+  /*
+    Every tier gating a video, with that tier's own rate (0020).
+
+    A video may now belong to several packages and pay a different figure in
+    each, so there is no longer one package per video — the tier that applies is
+    the one the VIEWER holds, and the page has to resolve that the same way
+    `video_start` does or it will show a rate the database will not pay.
+  */
+  const packagesByVideo = new Map<string, { packageId: string; rate: number | null }[]>();
+  for (const row of (packageLinksRes.data ?? []) as {
+    video_id: string;
+    package_id: string;
+    reward_amount: number | null;
+  }[]) {
+    const bucket = packagesByVideo.get(row.video_id) ?? [];
+    bucket.push({
+      packageId: row.package_id,
+      rate: row.reward_amount === null ? null : Number(row.reward_amount),
+    });
+    packagesByVideo.set(row.video_id, bucket);
   }
 
   const ownedPackageIds = new Set(
@@ -165,21 +197,26 @@ export async function listAvailableVideos(
     empty, so every gated video read "part of the a package package". The tier
     name is the upsell, not a secret.
   */
-  const packageIds = Array.from(
-    new Set(Array.from(packageByVideo.values()).filter((id) => ownedPackageIds.has(id))),
+  const allGatingIds = Array.from(
+    new Set(Array.from(packagesByVideo.values()).flat().map((g) => g.packageId)),
   );
 
-  const namedPackageIds = Array.from(new Set(packageByVideo.values()));
+  const packageIds = allGatingIds.filter((id) => ownedPackageIds.has(id));
 
-  const tierNames = new Map<string, string>();
-  if (namedPackageIds.length > 0) {
-    const { data: tiers } = await supabase
+  /*
+    Price as well as name, because with several tiers gating one video the lock
+    message has to name ONE of them and the actionable one is the cheapest — the
+    smallest step up, not the most expensive tier that happens to also gate it.
+  */
+  const tiers = new Map<string, { name: string; price: number }>();
+  if (allGatingIds.length > 0) {
+    const { data: rows } = await supabase
       .from("packages")
-      .select("id, name")
-      .in("id", namedPackageIds);
+      .select("id, name, price")
+      .in("id", allGatingIds);
 
-    for (const tier of (tiers ?? []) as { id: string; name: string }[]) {
-      tierNames.set(tier.id, tier.name);
+    for (const tier of (rows ?? []) as { id: string; name: string; price: number }[]) {
+      tiers.set(tier.id, { name: tier.name, price: Number(tier.price) });
     }
   }
 
@@ -229,21 +266,52 @@ export async function listAvailableVideos(
 
   const items = list.map((video) => {
     const campaign = video.campaign_id ? campaigns.get(video.campaign_id) ?? null : null;
-    const done = rewardedToday.get(video.id) ?? 0;
-    const remaining = video.daily_limit > 0 ? Math.max(0, video.daily_limit - done) : Infinity;
 
-    const packageId = packageByVideo.get(video.id) ?? null;
+    const gating = packagesByVideo.get(video.id) ?? [];
+
+    /*
+      Which tier applies to THIS viewer.
+
+      The tier they hold that pays the most, matching `video_start` exactly — it
+      picks the highest rate among held tiers and skips an exhausted one. Falling
+      back to the cheapest tier they do NOT hold is only for the lock message, so
+      the upsell names the smallest step rather than the largest number on the
+      page.
+    */
+    const held = gating
+      .filter((g) => ownedPackageIds.has(g.packageId))
+      .sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0));
+    const lockCandidate = gating
+      .filter((g) => !ownedPackageIds.has(g.packageId))
+      .sort(
+        (a, b) =>
+          (tiers.get(a.packageId)?.price ?? Number.POSITIVE_INFINITY) -
+          (tiers.get(b.packageId)?.price ?? Number.POSITIVE_INFINITY),
+      )[0];
+    const applied = held[0] ?? lockCandidate ?? gating[0] ?? null;
+
+    /*
+      The rate this viewer would actually be paid, and the figure every check
+      below must use: a tier paying 30 is refused by the campaign whether it can
+      still afford 10 or not, and the allowance is spent 30 at a time.
+    */
+    const rate = applied?.rate ?? Number(video.reward_amount);
+
+    const packageId = applied?.packageId ?? null;
     const packageUsage = packageId ? usage.get(packageId) : undefined;
     const packageInfo: VideoPackageInfo | null = packageId
       ? {
           id: packageId,
-          name: tierNames.get(packageId) ?? "a package",
+          name: tiers.get(packageId)?.name ?? "a package",
           owned: ownedPackageIds.has(packageId),
           dailyCap: packageUsage?.cap ?? 0,
           earnedToday: packageUsage?.earnedToday ?? 0,
           resetsAt: packageUsage?.resetsAt ?? null,
         }
       : null;
+
+    const done = rewardedToday.get(sessionKey(video.id, packageId)) ?? 0;
+    const remaining = video.daily_limit > 0 ? Math.max(0, video.daily_limit - done) : Infinity;
 
     /*
       The allowance can only be spent while there is room for THIS video's
@@ -255,7 +323,7 @@ export async function listAvailableVideos(
     const allowanceExhausted = Boolean(
       packageInfo?.owned &&
         packageInfo.dailyCap > 0 &&
-        packageInfo.earnedToday + Number(video.reward_amount) > packageInfo.dailyCap,
+        packageInfo.earnedToday + rate > packageInfo.dailyCap,
     );
 
     let eligible = true;
@@ -279,7 +347,7 @@ export async function listAvailableVideos(
       } else if (campaign.end_at && new Date(campaign.end_at).getTime() < now) {
         eligible = false;
         reason = "This campaign has ended.";
-      } else if (campaign.spent + video.reward_amount > campaign.budget) {
+      } else if (campaign.spent + rate > campaign.budget) {
         eligible = false;
         reason = "This campaign's reward budget is exhausted.";
       }
@@ -293,6 +361,12 @@ export async function listAvailableVideos(
 
     return {
       ...video,
+      /*
+        The rate this viewer earns, not the video's global figure. The watch page
+        and the catalogue both read this, so what they show is what the database
+        will pay.
+      */
+      reward_amount: rate,
       campaign,
       rewardedToday: done,
       remainingToday: Number.isFinite(remaining) ? remaining : -1,

@@ -321,31 +321,113 @@ begin
     usage.daily_cap, 10);
 end $$;
 
-/* -- a video belongs to at most one package ---------------------------------- */
+/* -- one video, many packages, a rate each (0020) ---------------------------- */
+
+/*
+  The old rule was "a video belongs to at most one package", and the reason given
+  was that a user holding both could earn against whichever cap suited them and
+  the two allowances would add up. 0020 REVERSES that on purpose: the catalogue is
+  shared, a tier carries its own rate, and a buyer holding two tiers legitimately
+  earns under both — they paid for both. What must not happen is one tier paying
+  another tier's rate, or the campaign being overpaid.
+*/
 
 do $$
 declare
-  p1 uuid := tc_test.create_package(800, 10);
-  p2 uuid := tc_test.create_package(2500, 20);
+  p1 uuid := tc_test.create_package(800, 100);
+  p2 uuid := tc_test.create_package(2500, 100);
   v record;
   v_msg text := 'NO ERROR RAISED';
 begin
-  select * into v from tc_test.create_video(5, 100, 1, 10);
-  perform tc_test.attach_video(p1, v.video_id);
+  select * into v from tc_test.create_video(5, 1000, 1, 10);
+  perform tc_test.attach_video(p1, v.video_id, 5);
 
   begin
-    perform tc_test.attach_video(p2, v.video_id);
+    perform tc_test.attach_video(p2, v.video_id, 30);
   exception when others then
     v_msg := sqlerrm;
   end;
 
+  perform tc_test.eq_text('a video can now be attached to a second package',
+    v_msg, 'NO ERROR RAISED');
+
+  perform tc_test.eq_num('…and the two rows carry their own rates',
+    (select count(*) from public.package_videos where video_id = v.video_id and reward_amount = 30),
+    1);
+end $$;
+
+/* -- the viewer is paid the rate of the best tier they hold ------------------ */
+
+do $$
+declare
+  u uuid := tc_test.create_user('pkg_rates@test.invalid');
+  p_small uuid := tc_test.create_package(800, 100);
+  p_big   uuid := tc_test.create_package(2500, 100);
+  v record;
+  token uuid;
+  res record;
+  retry_msg text := 'NO ERROR RAISED';
+begin
+  select * into v from tc_test.create_video(5, 1000, 1, 1);
+  perform tc_test.attach_video(p_small, v.video_id, 5);
+  perform tc_test.attach_video(p_big, v.video_id, 30);
+
+  perform tc_test.fund(u, 10000);
+  perform public.package_purchase(u, p_small);
+
   /*
-    Without this, a user holding both packages could earn against whichever cap
-    suited them and the two allowances would effectively add up.
+    Holding only the small tier: the SAME video must pay 5, not 30. This is the
+    assertion that would have caught a rate read from the wrong side of the join.
   */
-  perform tc_test.ok('a video cannot be attached to a second package',
-    position('duplicate key' in lower(v_msg)) > 0 or position('unique' in lower(v_msg)) > 0,
-    v_msg);
+  token := tc_test.begin_watch(u, v.video_id, 10);
+  select * into res from public.video_complete_session(u, token);
+  perform tc_test.eq_num('holding only the entry tier pays the entry rate', res.reward_amount, 5);
+  -- 10,000 funded, less the 800 tier, plus the 5 reward.
+  perform tc_test.eq_num('…and the balance reflects that rate', tc_test.available(u), 9205);
+
+  /*
+    Now buy the top tier. The per-video daily limit is scoped to the package, so
+    the same video is earnable AGAIN under the tier that pays more — which is the
+    entire point of a shared catalogue.
+  */
+  perform public.package_purchase(u, p_big);
+
+  begin
+    token := tc_test.begin_watch(u, v.video_id, 10);
+    select * into res from public.video_complete_session(u, token);
+  exception when others then
+    retry_msg := sqlerrm;
+  end;
+
+  perform tc_test.eq_text('the same video is earnable again under the higher tier',
+    retry_msg, 'NO ERROR RAISED');
+  perform tc_test.eq_num('…and it pays the higher tier''s own rate', res.reward_amount, 30);
+  -- …less the 2,500 tier, plus the 30 reward.
+  perform tc_test.eq_num('…not the rate of the tier whose limit was already spent',
+    tc_test.available(u), 6735);
+end $$;
+
+/* -- a package row with no rate falls back to the video's own figure ---------- */
+
+do $$
+declare
+  u uuid := tc_test.create_user('pkg_legacy_rate@test.invalid');
+  p uuid := tc_test.create_package(800, 100);
+  v record;
+  token uuid;
+  res record;
+begin
+  select * into v from tc_test.create_video(7, 1000, 1, 10);
+  perform tc_test.attach_video(p, v.video_id);   -- no rate: the pre-0020 shape
+
+  perform tc_test.fund(u, 10000);
+  perform public.package_purchase(u, p);
+
+  token := tc_test.begin_watch(u, v.video_id, 10);
+  select * into res from public.video_complete_session(u, token);
+
+  perform tc_test.eq_num('a package row with no rate keeps paying the video''s reward',
+    res.reward_amount, 7);
 end $$;
 
 /* -- the functions are not callable from a user session ---------------------- */

@@ -279,12 +279,23 @@ begin
 end;
 $$;
 
-/** Puts a video into a package. A video may belong to at most one. */
-create or replace function tc_test.attach_video(p_package uuid, p_video uuid)
+/**
+ * Puts a video into a package, at a rate for that package.
+ *
+ * Since 0020 one video may belong to MANY packages and pay a different figure in
+ * each, so `p_rate` is what the tier pays for it. NULL keeps the old behaviour of
+ * falling back to the video's own `reward_amount`.
+ */
+create or replace function tc_test.attach_video(
+  p_package uuid,
+  p_video   uuid,
+  p_rate    numeric default null
+)
 returns void
 language sql
 as $$
-  insert into public.package_videos (package_id, video_id) values (p_package, p_video);
+  insert into public.package_videos (package_id, video_id, reward_amount)
+  values (p_package, p_video, p_rate);
 $$;
 
 /** Rewinds a rewarded session to a given number of days ago. */

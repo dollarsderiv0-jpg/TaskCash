@@ -225,6 +225,17 @@ async function recordRefusal(
       refusedBeforeTransaction: dropRecord,
       code: refusal.code,
       message,
+      /*
+        What the payment was FOR.
+
+        When the record is dropped this event is all that remains, so without
+        this the audit trail cannot tell a refused package payment from a refused
+        wallet top-up. That is not hypothetical: the first real refusal after
+        0019 shipped was a `PROVIDER_THROTTLED` at 07:57 on 2026-09-22, and the
+        only reason it could not be traced to the package the buyer was trying to
+        buy is that this field did not exist.
+      */
+      packageId: deposit.package_id ?? null,
       initiation: refusal.raw ?? null,
     },
     error: message.slice(0, 500),
@@ -242,6 +253,9 @@ async function recordRefusal(
     merchantReference: deposit.merchant_reference,
     amount: Number(deposit.amount),
     currency: deposit.currency,
+    // Named as well as the amount, for the same reason as the audit payload: on a
+    // package payment the amount alone does not say which tier was being bought.
+    packageId: deposit.package_id ?? null,
     code: refusal.code,
     httpStatus,
     keptRecord: !dropRecord,
