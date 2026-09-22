@@ -2,7 +2,7 @@
   "name": "TaskCash Pro",
   "short_name": "TaskCash",
   "description": "Earn rewards from eligible online activities.",
-  "start_url": "/dashboard",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

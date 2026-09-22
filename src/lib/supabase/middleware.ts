@@ -5,6 +5,21 @@ const PROTECTED_PREFIXES = ["/dashboard", "/admin"];
 const AUTH_ROUTES = ["/login", "/register"];
 
 /**
+ * The front door: the public landing page.
+ *
+ * A signed-in visitor who opens the site — or taps the installed app, whose
+ * manifest `start_url` is this route — belongs inside the app, not on the
+ * marketing page, where the header offers "Login" and "Create Account" to
+ * someone who is already signed in. A signed-out visitor gets the landing page
+ * and its sign-up calls to action, which is the one place those belong.
+ *
+ * Routing here rather than in the page keeps it free: this middleware already
+ * resolves the session on every request, so the landing page does not have to
+ * gain an auth round-trip of its own just to decide where to send the reader.
+ */
+const FRONT_DOOR_ROUTES = ["/"];
+
+/**
  * Refreshes the Supabase session cookie on every request and performs a cheap
  * edge-level gate on private routes.
  *
@@ -58,6 +73,13 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && AUTH_ROUTES.includes(path)) {
+    const redirect = request.nextUrl.clone();
+    redirect.pathname = "/dashboard";
+    redirect.search = "";
+    return NextResponse.redirect(redirect);
+  }
+
+  if (user && FRONT_DOOR_ROUTES.includes(path)) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/dashboard";
     redirect.search = "";

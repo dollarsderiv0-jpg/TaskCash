@@ -29,6 +29,7 @@
     "test:deposit-bonus": "node .freebuff/deposit-bonus-check.mjs",
     "test:package-terms": "node .freebuff/package-terms-check.mjs",
     "test:package-description": "npx tsc -p .freebuff/package-description-test/tsconfig.json && node .freebuff/package-description-test/run.mjs",
+    "test:front-door": "node .freebuff/front-door-check.mjs",
     "seed:demo-videos": "node scripts/seed-demo-videos.mjs",
     "seed:ads": "node scripts/seed-ads.mjs",
     "videos:ingest": "node scripts/ingest-youtube-trailers.mjs",
