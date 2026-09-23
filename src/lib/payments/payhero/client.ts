@@ -6,6 +6,11 @@ import {
   resolveApiBase,
 } from "@/lib/payments/payhero/config";
 import { PayHeroError } from "@/lib/payments/payhero/errors";
+import {
+  payheroMaxAttempts,
+  retryDelayMs,
+  retryKindFor,
+} from "@/lib/payments/payhero/retry";
 
 /**
  * Low-level PayHero HTTP transport.
@@ -52,14 +57,16 @@ type FetchOptions = {
   requestReference?: string | null;
 };
 
-const MAX_ATTEMPTS = 3;
-
 export async function payheroRequest<T>(path: string, options: FetchOptions): Promise<T> {
   const base = resolveApiBase();
   const url = `${base.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 
   const timeout = payheroTimeoutMs();
-  const attempts = options.retryable ? MAX_ATTEMPTS : 1;
+  /*
+    The attempt bound and every delay live in `retry.ts`, together, so the number
+    of attempts and the schedule they consume cannot drift apart.
+  */
+  const attempts = payheroMaxAttempts(options.retryable);
   const authorization = payheroAuthHeader();
 
   let lastError: unknown = null;
@@ -114,22 +121,30 @@ export async function payheroRequest<T>(path: string, options: FetchOptions): Pr
         /*
           A throttle is its own condition, not a bad request and not an outage:
           the request was valid and the provider is up — we are simply asking too
-          often. Deliberately NOT added to the transient set, because retrying
-          re-spends the very budget that is exhausted and can extend the throttle.
-          It gets its own code so the deposit path can say "try again shortly"
-          instead of "invalid request" or "we could not reach the provider".
+          often. It gets its own code so the deposit path can say "try again
+          shortly" instead of "invalid request" or "we could not reach the
+          provider", AND its own, longer retry schedule (see retry.ts).
+
+          That second half was missing. The previous 400ms/800ms backoff spent
+          both attempts inside the same rate-limit window and then failed the
+          customer anyway, so the retry existed without ever being able to
+          succeed — which made a throttle indistinguishable from a refusal.
         */
         const throttled = /rate limit|throttl/i.test(safe);
         const code = throttled ? "PROVIDER_THROTTLED" : "PROVIDER_HTTP_ERROR";
 
-        // 5xx and 429 will not fix themselves within one request, but they are
-        // worth a bounded retry; a 4xx will not fix itself at all.
-        const transient = response.status >= 500 || response.status === 429;
+        /*
+          Only a throttle or a 5xx is worth repeating. A 4xx that is not a
+          throttle answers identically next time — a bad number, a bad amount, a
+          rejected request — so it is final on the first response.
+        */
+        const retryKind = retryKindFor(response.status);
+        const retryDelay = retryKind === null ? null : retryDelayMs(retryKind, attempt);
 
         lastError = new PayHeroError(code, safe, response.status, asRecord);
 
-        if (transient && attempt < attempts) {
-          await sleep(400 * 2 ** (attempt - 1));
+        if (retryDelay !== null && attempt < attempts) {
+          await sleep(retryDelay);
           continue;
         }
 
@@ -148,18 +163,32 @@ export async function payheroRequest<T>(path: string, options: FetchOptions): Pr
       return payload as T;
     } catch (error) {
       if (error instanceof PayHeroError) {
-        // A 4xx is final: retrying it would only repeat the same refusal.
+        /*
+          A logged error carries the internal id and is already final: the
+          refusal has been reported once, and repeating the request would only
+          repeat it. A 4xx that is not a throttle is final for the same reason.
+        */
         if (error.internalErrorId || error.code === "PAYMENT_NOT_CONFIGURED") throw error;
-        if (attempt >= attempts) throw error;
-        await sleep(400 * 2 ** (attempt - 1));
+
+        const kind = retryKindFor(error.httpStatus);
+        const delay = kind === null ? null : retryDelayMs(kind, attempt);
+        if (attempt >= attempts || delay === null) throw error;
+
+        await sleep(delay);
         continue;
       }
 
       const aborted = error instanceof Error && error.name === "AbortError";
       lastError = error;
 
-      if (attempt < attempts) {
-        await sleep(400 * 2 ** (attempt - 1));
+      /*
+        A dropped socket or an aborted request is on the SHORT schedule: neither
+        is a rate limiter, and waiting seconds for one would only add delay to an
+        outage that is already failing faster than the customer wants.
+      */
+      const transportDelay = retryDelayMs("transient", attempt);
+      if (attempt < attempts && transportDelay !== null) {
+        await sleep(transportDelay);
         continue;
       }
 
