@@ -497,7 +497,10 @@ export type Currency = {
   min_deposit: number;
   min_withdrawal: number;
   max_withdrawal: number;
+  /** Flat fee charged only when `withdrawal_fee_percent` is 0. */
   withdrawal_fee: number;
+  /** Percentage of the request charged as a fee. Takes precedence when above 0. */
+  withdrawal_fee_percent: number;
   enabled: boolean;
 };
 

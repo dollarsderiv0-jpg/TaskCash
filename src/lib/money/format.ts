@@ -48,6 +48,20 @@ export function roundMoney(amount: number, currency: string): number {
   return fromMinor(toMinor(amount, currency), currency);
 }
 
+/**
+ * Rounds to two decimal places, whatever the currency.
+ *
+ * Deliberately NOT `roundMoney`: that rounds to the currency's own minor unit,
+ * which is 0 for UGX/TZS/RWF. This mirrors `round(x, 2)` on a `numeric` in
+ * Postgres, which is what the database uses when it computes a percentage fee.
+ * Using the currency's precision here instead would make a preview disagree with
+ * the charge it is previewing.
+ */
+export function roundToCents(amount: number): number {
+  if (!Number.isFinite(amount)) return 0;
+  return Math.round(amount * 100) / 100;
+}
+
 export function formatMoney(
   amount: number | string | null | undefined,
   currency = "KES",

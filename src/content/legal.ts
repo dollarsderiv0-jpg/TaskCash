@@ -258,13 +258,21 @@ export const LEGAL_DOCUMENTS: Record<string, LegalDocument> = {
         ],
       },
       {
-        heading: "4. Verification and limits",
+        heading: "4. Fees",
         paragraphs: [
-          "Withdrawals may require a verified account depending on the rules in force, and are subject to the minimum, maximum and daily limits shown on the withdrawal screen for your currency. Fees, where applicable, are shown before you confirm.",
+          "A withdrawal fee of 10% of the amount you request is deducted from every payout. It is taken out of the request, not added on top of it: if you request 1,000, the fee is 100 and 900 is sent to you.",
+          "The fee is shown on the withdrawal screen as you enter an amount, and again in the confirmation summary, before you submit anything. The amount that will actually be sent to you is shown separately from the fee, so the two figures cannot be confused.",
+          "Withdrawals may be subject to a flat fee instead of a percentage in some currencies depending on the rules in force. Whatever basis applies to your currency is shown on the withdrawal screen before you confirm.",
         ],
       },
       {
-        heading: "5. Destination",
+        heading: "5. Verification and limits",
+        paragraphs: [
+          "Withdrawals may require a verified account depending on the rules in force, and are subject to the minimum, maximum and daily limits shown on the withdrawal screen for your currency.",
+        ],
+      },
+      {
+        heading: "6. Destination",
         paragraphs: [
           "Payouts are sent to the mobile money number you provide. Make sure it is correct and registered in your own name: funds sent to a wrong or third-party number may not be recoverable.",
         ],
@@ -340,7 +348,14 @@ export const LEGAL_DOCUMENTS: Record<string, LegalDocument> = {
         heading: "4. Protect yourself",
         bullets: [
           "Nobody from TaskCash Pro will ever ask for your password or a one-time code to release a withdrawal.",
-          "We never ask you to pay a fee to release earnings. Approval is a review step, not a fee.",
+          /*
+            The platform does now charge a withdrawal fee, so "we never ask you to
+            pay a fee" would be false. The anti-fraud point is narrower than that
+            and still true: a fee is deducted from the payout automatically and is
+            never collected separately, so anyone asking you to send money is not
+            us. Saying the true thing is what keeps this warning worth reading.
+          */
+          "We never ask you to send money to release a withdrawal. Any withdrawal fee is deducted automatically from the amount you request and is shown before you confirm — we will never ask you to pay it separately, or to anyone else.",
           "If someone promises you guaranteed earnings 'through TaskCash Pro', that person does not represent us.",
         ],
       },

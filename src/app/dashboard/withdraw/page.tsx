@@ -26,7 +26,15 @@ export default async function WithdrawPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Withdraw</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Request a payout to your mobile money number. Every request is reviewed before payment.
+          {preview.withdrawalFeePercent > 0 ? (
+            <>
+              Request a payout to your mobile money number. A {preview.withdrawalFeePercent}%
+              withdrawal fee applies to every payout and is deducted from the amount you request.
+              Every request is reviewed before payment.
+            </>
+          ) : (
+            <>Request a payout to your mobile money number. Every request is reviewed before payment.</>
+          )}
         </p>
       </div>
 
@@ -66,6 +74,7 @@ export default async function WithdrawPage() {
             minimum={preview.minimum}
             maximum={preview.maximum}
             fee={preview.withdrawalFee}
+            feePercent={preview.withdrawalFeePercent}
             dailyRemaining={preview.dailyRemaining}
             requiresKyc={preview.requiresKyc}
             kycStatus={preview.kycStatus}

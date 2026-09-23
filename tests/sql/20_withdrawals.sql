@@ -327,8 +327,15 @@ declare
   w public.withdrawals;
   done public.withdrawals;
 begin
-  -- Give KES a non-zero fee so the accounting is actually exercised.
-  update public.currencies set withdrawal_fee = 50 where code = 'KES';
+  /*
+    This block covers the FLAT fee path, so the percentage is switched off
+    deliberately. Migration 0026 gives every currency a 10% withdrawal fee, and
+    a percentage takes precedence over the flat column — leaving the percentage
+    on would make this block assert 100 instead of 50, and it would stop testing
+    the flat accounting it exists for. The percentage path has its own block
+    below.
+  */
+  update public.currencies set withdrawal_fee = 50, withdrawal_fee_percent = 0 where code = 'KES';
 
   perform tc_test.fund(u, 5000);
   w := tc_test.request_withdrawal(u, 1000, 'WD-KEY-FEE-1');
@@ -361,5 +368,91 @@ begin
   perform tc_test.eq_num('total wallet value fell by exactly the requested amount',
     tc_test.available(u) + tc_test.locked(u), 4000);
 
-  update public.currencies set withdrawal_fee = 0 where code = 'KES';
+  -- Restore the shipped configuration exactly: no flat fee, and the 10%
+  -- percentage from 0026. Leaving the percentage at 0 would leak into every
+  -- later test in the run.
+  update public.currencies set withdrawal_fee = 0, withdrawal_fee_percent = 10 where code = 'KES';
+end $$;
+
+/* -- percentage fee (migration 0026) -------------------------------------- */
+
+do $$
+declare
+  u uuid := tc_test.create_user('wd_fee_pct@test.invalid');
+  admin uuid := tc_test.create_user('wd_admin_pct@test.invalid');
+  u_round uuid := tc_test.create_user('wd_fee_round@test.invalid');
+  u_override uuid := tc_test.create_user('wd_fee_override@test.invalid');
+  u_guard uuid := tc_test.create_user('wd_fee_guard@test.invalid');
+  w public.withdrawals;
+  w_pct public.withdrawals;
+  configured numeric;
+begin
+  select withdrawal_fee_percent into configured from public.currencies where code = 'KES';
+  perform tc_test.eq_num('KES charges a 10% withdrawal fee', configured, 10);
+
+  perform tc_test.fund(u, 5000);
+  w_pct := tc_test.request_withdrawal(u, 1000, 'WD-KEY-PCT-1');
+
+  perform tc_test.eq_num('the fee is 10% of the amount requested', w_pct.fee, 100);
+  perform tc_test.eq_num('the user receives the amount less the fee', w_pct.net_amount, 900);
+  /*
+    The hold stays at the GROSS, not the net. The whole request leaves the
+    available balance, and the payout and the fee are both settled out of the
+    hold — so a user cannot spend the fee while their request is in review.
+  */
+  perform tc_test.eq_num('the whole gross amount is held', tc_test.locked(u), 1000);
+  perform tc_test.eq_num('the available balance falls by the gross', tc_test.available(u), 4000);
+
+  /* Rounding is part of the rule: 10% of 333 is 33.30, not 33.3333. */
+  perform tc_test.fund(u_round, 5000);
+  w := tc_test.request_withdrawal(u_round, 333, 'WD-KEY-PCT-ROUND');
+  perform tc_test.eq_num('the fee is rounded to the cent', w.fee, 33.3);
+  perform tc_test.eq_num('the payout is the rounded remainder', w.net_amount, 299.7);
+
+  /*
+    An explicit fee still wins over the configured percentage. The application
+    always passes null today, but the parameter is part of the function's own
+    contract and a percentage must not make it inert.
+  */
+  perform tc_test.fund(u_override, 5000);
+  select * into w from public.withdrawal_reserve(u_override, 500, '+254700000000', 'WD-KEY-PCT-OVERRIDE', 7, 0);
+  perform tc_test.eq_num('an explicit fee overrides the percentage', w.fee, 7);
+  perform tc_test.eq_num('the payout follows the explicit fee', w.net_amount, 493);
+
+  /*
+    A fee that would consume the whole request is refused rather than paying out
+    nothing. Forced here by temporarily setting 100%, which no shipped
+    configuration uses.
+  */
+  perform tc_test.fund(u_guard, 5000);
+  update public.currencies set withdrawal_fee_percent = 100 where code = 'KES';
+  perform tc_test.raises('a fee equal to the request is refused',
+    format($q$select public.withdrawal_reserve(%L::uuid, 500, '+254700000000', 'WD-KEY-PCT-GUARD', null, 0)$q$, u_guard),
+    'WITHDRAWAL_FEE_INVALID');
+  update public.currencies set withdrawal_fee_percent = 10 where code = 'KES';
+
+  /*
+    Conservation on the percentage path: the hold bucket must net to zero
+    (+gross held, -net paid, -fee kept) and the whole gross must leave the
+    wallet permanently.
+  */
+  perform tc_test.approve(w_pct.id, admin);
+  select * into w_pct from public.withdrawal_complete(w_pct.id, 'PROV-TX-PCT-1', null, '{}'::jsonb);
+
+  perform tc_test.eq_num('the fee is settled out of the hold, not the available balance', tc_test.locked(u), 0);
+  perform tc_test.eq_num('the user is debited exactly the amount requested', tc_test.available(u), 4000);
+  perform tc_test.eq_num('a fee ledger row exists', tc_test.ledger_count('WDF-' || w_pct.id::text), 1);
+
+  perform tc_test.eq_text('the hold bucket nets to exactly zero',
+    (select sum(locked_delta)::text
+       from public.wallet_transactions
+      where reference in ('WHL-' || w_pct.id::text, 'WDR-' || w_pct.id::text, 'WDF-' || w_pct.id::text)), '0.0000');
+
+  perform tc_test.eq_text('available falls by exactly the gross amount',
+    (select sum(available_delta)::text
+       from public.wallet_transactions
+      where reference in ('WHL-' || w_pct.id::text, 'WDR-' || w_pct.id::text, 'WDF-' || w_pct.id::text)), '-1000.0000');
+
+  perform tc_test.eq_num('total wallet value fell by exactly the requested amount',
+    tc_test.available(u) + tc_test.locked(u), 4000);
 end $$;

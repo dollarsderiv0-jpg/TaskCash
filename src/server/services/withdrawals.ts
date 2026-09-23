@@ -44,7 +44,14 @@ export type WithdrawalPreview = {
   minimum: number;
   maximum: number;
   dailyLimit: number;
+  /** Flat fee, still used when no percentage is configured. */
   withdrawalFee: number;
+  /**
+   * Percentage charged on every withdrawal, or 0 when the currency is on a flat
+   * fee. The form needs the rate itself rather than a pre-computed amount,
+   * because the fee changes as the user types.
+   */
+  withdrawalFeePercent: number;
   availableBalance: number;
   lockedBalance: number;
   dailyUsed: number;
@@ -68,6 +75,7 @@ export async function getWithdrawalPreview(input: {
       min_withdrawal: number;
       max_withdrawal: number;
       withdrawal_fee: number;
+      withdrawal_fee_percent: number | null;
     }>();
 
   const { data: daily } = await admin
@@ -107,6 +115,12 @@ export async function getWithdrawalPreview(input: {
     maximum: Number(currency?.max_withdrawal ?? 100_000),
     dailyLimit,
     withdrawalFee: Number(currency?.withdrawal_fee ?? 0),
+    /*
+      `?? 0` rather than a default rate: a deployment whose database predates
+      migration 0026 reads null here and must keep charging its flat fee, not
+      silently start charging 10% that the database would not apply.
+    */
+    withdrawalFeePercent: Number(currency?.withdrawal_fee_percent ?? 0),
     availableBalance: Number(input.wallet.available_balance),
     lockedBalance: Number(input.wallet.locked_balance),
     dailyUsed,

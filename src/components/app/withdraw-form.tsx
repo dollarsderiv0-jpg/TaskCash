@@ -10,6 +10,12 @@ import { Alert, Separator } from "@/components/ui/misc";
 import { useToast } from "@/components/ui/toast";
 import { apiRequest, newIdempotencyKey } from "@/lib/client/api";
 import { formatMoney } from "@/lib/money/format";
+import {
+  isPercentageFee,
+  withdrawalFeeFor,
+  withdrawalNetFor,
+  type WithdrawalFeeBasis,
+} from "@/lib/money/withdrawal-fee";
 import { statusLabel } from "@/lib/types";
 
 type WithdrawalResult = {
@@ -42,6 +48,7 @@ export function WithdrawForm({
   minimum,
   maximum,
   fee,
+  feePercent,
   dailyRemaining,
   requiresKyc,
   kycStatus,
@@ -52,7 +59,10 @@ export function WithdrawForm({
   defaultPhone: string;
   minimum: number;
   maximum: number;
+  /** Flat fee, used only when `feePercent` is 0. */
   fee: number;
+  /** Percentage charged on the request, or 0 for a flat fee. */
+  feePercent: number;
   dailyRemaining: number;
   requiresKyc: boolean;
   kycStatus: string;
@@ -70,8 +80,17 @@ export function WithdrawForm({
 
   const numericAmount = Number(amount);
   const amountValid = Number.isFinite(numericAmount) && numericAmount > 0;
-  const effectiveFee = fee > 0 ? Math.min(fee, Math.max(0, numericAmount || 0)) : 0;
-  const netAmount = amountValid ? Math.max(0, numericAmount - effectiveFee) : 0;
+
+  /*
+   * The fee is derived by the same module the database mirrors, so what is shown
+   * here is what `withdrawal_reserve` will charge rather than a second opinion
+   * about it. It recalculates on every keystroke — a percentage cannot be
+   * displayed as a fixed amount before the user has entered one.
+   */
+  const feeBasis: WithdrawalFeeBasis = { percent: feePercent, flat: fee };
+  const percentageFee = isPercentageFee(feeBasis);
+  const effectiveFee = amountValid ? withdrawalFeeFor(numericAmount, feeBasis) : 0;
+  const netAmount = amountValid ? withdrawalNetFor(numericAmount, feeBasis) : 0;
 
   const kycBlocked = requiresKyc && kycStatus !== "VERIFIED";
   const nothingAvailable = availableBalance < minimum;
@@ -252,7 +271,14 @@ export function WithdrawForm({
 
       <dl className="space-y-2 text-sm">
         <SummaryRow label="Withdrawal amount" value={amountValid ? formatMoney(numericAmount, currency) : "—"} />
-        <SummaryRow label="Fee" value={formatMoney(effectiveFee, currency)} />
+        {/*
+          The rate is named in the label, not only the amount: a user is entitled
+          to see why 100 is being deducted, not just that it is.
+        */}
+        <SummaryRow
+          label={percentageFee ? `Fee (${feePercent}%)` : "Fee"}
+          value={amountValid ? `−${formatMoney(effectiveFee, currency)}` : "—"}
+        />
         <SummaryRow
           label="You receive"
           value={amountValid ? formatMoney(netAmount, currency) : "—"}
