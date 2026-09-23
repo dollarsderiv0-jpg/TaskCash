@@ -13,7 +13,6 @@ import {
   LifeBuoy,
   LogOut,
   Megaphone,
-  Package as PackageIcon,
   PlayCircle,
   Settings,
   ShieldCheck,
@@ -36,15 +35,16 @@ const PRIMARY_NAV = [
   { href: "/dashboard/profile", label: "Profile", icon: UserRound },
 ];
 
+/*
+  There is deliberately no "Packages" entry here any more.
+
+  The catalogue and its payment flow live on Watch & Earn, which the primary bar
+  already links to as "Watch" — so a second entry would be two labels for one
+  destination, and the drawer is a map of where things ARE, not a list of
+  synonyms. `/dashboard/packages` still redirects there, so old bookmarks and the
+  "package activated" notification keep working.
+*/
 const SECONDARY_NAV = [
-  // Packages sit with the money links rather than in the primary bar: a package
-  // is bought from the wallet, not browsed like the watch page.
-  /*
-    Points at Watch & Earn, which is where the package catalogue and its payment
-    flow now live. `/dashboard/packages` still redirects here for old links, but
-    making the navigation hop through it would be a redirect on every tap.
-  */
-  { href: "/dashboard/watch", label: "Packages", icon: PackageIcon },
   { href: "/dashboard/deposit", label: "Deposit", icon: ArrowDownToLine },
   { href: "/dashboard/withdraw", label: "Withdraw", icon: ArrowUpFromLine },
   { href: "/dashboard/redeem", label: "Redeem Code", icon: Gift },
@@ -222,9 +222,6 @@ export function AppShell({ user, children }: { user: ShellUser; children: React.
 
       {/* Desktop top bar */}
       <header className="sticky top-0 z-30 hidden h-16 items-center justify-end gap-3 border-b border-border bg-background/90 px-6 backdrop-blur-lg lg:flex">
-        <Button asChild variant="outline" size="sm">
-          <Link href="/dashboard/watch">Packages</Link>
-        </Button>
         <Button asChild variant="outline" size="sm">
           <Link href="/dashboard/watch">Watch &amp; Earn</Link>
         </Button>
