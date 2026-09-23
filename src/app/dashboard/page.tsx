@@ -21,6 +21,8 @@ import { StatCard } from "@/components/app/stat-card";
 import { OnboardingChecklist, type OnboardingStep } from "@/components/app/onboarding-checklist";
 import { EarningsChart } from "@/components/app/earnings-chart";
 import { TransactionList } from "@/components/app/transaction-list";
+import { ActivityTicker } from "@/components/app/activity-ticker";
+import { listRecentActivity } from "@/server/services/activity";
 import { CompanySlideshow } from "@/components/app/company-slideshow";
 import { ComplianceDocuments } from "@/components/app/compliance-documents";
 import { listShowcaseCompanyImages } from "@/server/services/company-images";
@@ -43,12 +45,19 @@ export default async function DashboardPage() {
   const session = await guardPage();
   const userId = session.profile.id;
 
-  const [overview, earnings, recent, preview, referralStats] = await Promise.all([
+  /*
+    The activity feed is the one query here that reads OTHER people's rows. It
+    is masked at the source (see listRecentActivity) and the caller's own id is
+    passed in so their own movements are excluded rather than shown back to
+    them as news.
+  */
+  const [overview, earnings, recent, preview, referralStats, activity] = await Promise.all([
     getWalletOverview(userId),
     getEarningsSummary(userId),
     listWalletTransactions(userId, { pageSize: 6 }),
     getWithdrawalPreview({ profile: session.profile, wallet: session.wallet }),
     getReferralStats(userId),
+    listRecentActivity({ viewerProfileId: userId }),
   ]);
 
   const currency = session.wallet.currency;
@@ -374,6 +383,13 @@ export default async function DashboardPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/*
+        Fixed-position, so its place in the tree is irrelevant. Absent entirely
+        when there is nothing real to show — the component returns null rather
+        than inventing movement.
+      */}
+      <ActivityTicker initialItems={activity.items} />
     </div>
   );
 }

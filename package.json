@@ -52,6 +52,8 @@
     "test:bearer:probe": "node .freebuff/bearer-probe.mjs",
     "test:classifier": "npx tsc -p .freebuff/classifier-test/tsconfig.json && node .freebuff/classifier-test/run.mjs",
     "test:mpesa:config": "npx tsc -p .freebuff/mpesa-config-test/tsconfig.json && node .freebuff/mpesa-config-test/run.mjs",
+    "test:activity-mask": "npx tsc -p .freebuff/activity-mask-test/tsconfig.json && node .freebuff/activity-mask-test/run.mjs",
+    "test:payhero:throttle": "npx tsc -p .freebuff/payhero-throttle-test/tsconfig.json && node .freebuff/payhero-throttle-test/run.mjs",
     "test:payhero": "npx tsc -p .freebuff/payhero-test/tsconfig.json && node .freebuff/payhero-test/run.mjs",
     "test:payhero:deposit": "node .freebuff/payhero-deposit-check.mjs",
     "db:reinit": "node scripts/bundle-reinit.mjs",
