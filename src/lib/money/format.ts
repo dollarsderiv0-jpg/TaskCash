@@ -51,11 +51,17 @@ export function roundMoney(amount: number, currency: string): number {
 export function formatMoney(
   amount: number | string | null | undefined,
   currency = "KES",
-  options: { compact?: boolean; withSymbol?: boolean } = {},
+  options: { compact?: boolean; withSymbol?: boolean; decimals?: number } = {},
 ): string {
   const numeric = typeof amount === "string" ? Number(amount) : (amount ?? 0);
   const safe = Number.isFinite(numeric) ? numeric : 0;
-  const decimals = minorUnits(currency);
+  /*
+    `decimals` overrides the currency's own precision for DISPLAY ONLY — the
+    value itself is untouched. The activity popup asks for whole units, where
+    "KES 70,000" reads as somebody's deposit and "KES 70,000.00" reads as a
+    statement line.
+  */
+  const decimals = options.decimals ?? minorUnits(currency);
 
   const formatted = new Intl.NumberFormat("en-KE", {
     minimumFractionDigits: decimals,
@@ -119,5 +125,36 @@ export function relativeTime(value: string | Date | null | undefined): string {
   if (Math.abs(hours) < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   if (Math.abs(days) < 30) return `${days}d ago`;
+  return formatDate(date);
+}
+
+/**
+ * The same elapsed time, spelled out: "1 min ago", "5 mins ago", "2 hours ago".
+ *
+ * `relativeTime` above stays compact ("5m ago"), which is right in a table cell
+ * squeezed against a timestamp column. A sentence needs the words.
+ *
+ * Elapsed time is TRUNCATED, never rounded: 119 seconds is "1 min ago", because
+ * rounding up would claim more time has passed than actually has. A completion
+ * time in the future — clock skew between the database and the browser —
+ * degrades to "just now" rather than to a negative count.
+ */
+export function relativeTimeWords(value: string | Date | null | undefined): string {
+  if (!value) return "—";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+
   return formatDate(date);
 }

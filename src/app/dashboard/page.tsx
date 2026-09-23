@@ -46,10 +46,10 @@ export default async function DashboardPage() {
   const userId = session.profile.id;
 
   /*
-    The activity feed is the one query here that reads OTHER people's rows. It
-    is masked at the source (see listRecentActivity) and the caller's own id is
-    passed in so their own movements are excluded rather than shown back to
-    them as news.
+    The activity feed is the one query here that reads OTHER people's rows. The
+    identities are reduced at the source (see listRecentActivity) and the
+    caller's own id is passed in so their own movements are excluded rather than
+    shown back to them as news.
   */
   const [overview, earnings, recent, preview, referralStats, activity] = await Promise.all([
     getWalletOverview(userId),
@@ -385,9 +385,9 @@ export default async function DashboardPage() {
       </Card>
 
       {/*
-        Fixed-position, so its place in the tree is irrelevant. Absent entirely
-        when there is nothing real to show — the component returns null rather
-        than inventing movement.
+        Fixed-position at the top of the viewport, so its place in the tree is
+        irrelevant. Absent entirely when there is nothing real to show — the
+        component returns null rather than inventing movement.
       */}
       <ActivityTicker initialItems={activity.items} />
     </div>

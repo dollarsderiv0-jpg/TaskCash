@@ -1,6 +1,5 @@
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import {
-  amountBand,
   maskCountry,
   maskName,
   type ActivityKind,
@@ -22,8 +21,11 @@ import { selectRecentWindow } from "@/lib/activity/window";
  * other decision — which rows survive the window — lives in
  * `lib/activity/window.ts` for the same reason.
  *
- *   1. An AMOUNT never leaves. Only the band it fell in.
- *   2. An IDENTITY never leaves. Only a first name, an initial and a country.
+ *   1. An IDENTITY never leaves. Only a first name, an initial and a country.
+ *   2. An AMOUNT DOES leave, in full — the popup shows the real figure. An
+ *      earlier version of this feed reduced every amount to a range and the
+ *      reduction was deleted rather than left in place: a masking step that
+ *      nothing applies is worse than none, because it reads as a guarantee.
  *   3. Only COMPLETED movements count, and only ones with a completion time. A
  *      PENDING row is somebody's intention, and publishing an intention that may
  *      still fail is a claim about money that has not moved.
@@ -80,16 +82,20 @@ function toMovement(row: ActivityRow, kind: ActivityKind): Movement | null {
 
 function toItem(movement: Movement, profiles: Map<string, ProfileRow>): RecentActivityItem {
   const { row, kind } = movement;
-  const amount = typeof row.amount === "string" ? Number(row.amount) : row.amount;
-  const { bandMin, bandMax } = amountBand(amount);
+  const raw = typeof row.amount === "string" ? Number(row.amount) : row.amount;
   const profile = profiles.get(row.user_id);
 
   return {
     kind,
     displayName: maskName(profile?.full_name),
     country: maskCountry(profile?.country),
-    bandMin,
-    bandMax,
+    /*
+      The real figure, as asked for. A non-numeric amount becomes 0 rather than
+      NaN: NaN would reach the popup and render as "KES NaN", which reads as a
+      broken site, whereas zero reads as something very small. The column is
+      numeric, so this is a defensive branch rather than a case.
+    */
+    amount: Number.isFinite(raw) ? raw : 0,
     currency: row.currency,
     at: movement.at,
   };
