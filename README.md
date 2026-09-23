@@ -338,14 +338,21 @@ their phone.
 
 Live at **https://taskcash-pro.vercel.app** (project `justcallmedavy-3136/taskcash-pro`).
 
-There is no Git integration, because this checkout is not a repository with a remote — so a deploy
-uploads the local working tree directly, and uncommitted edits ship:
+The project is **not connected to GitHub**, so a deploy uploads the local working tree directly and
+uncommitted edits ship — commit before deploying. Check the connection with `GET /v9/projects/<id>`:
+it reports `link: null`. The deployment history cannot tell you either way, because every deployment
+carries a commit sha whether or not a push caused it: the CLI stamps the local HEAD onto the upload.
+That is why a history full of commit shas still means no push can deploy anything.
 
 ```bash
 npm run deploy:env -- --url https://taskcash-pro.vercel.app   # push env vars; values go over stdin
-npx vercel --prod --yes
+npx vercel@48.2.0 --prod --yes
 npm run check:live                                            # 11 read-only checks on the live site
 ```
+
+Pin that CLI version. Bare `npx vercel` resolves to a release that fails to install in this
+workspace (`Invalid Version`), and `39.4.2` rejects a `vcp_`-prefixed API token as *"not valid"* —
+the token is fine, the CLI is simply too old to parse it. `48.2.0` accepts it.
 
 `npm run deploy:env` is an allowlist, not a mirror of `.env.local`. That file describes a local
 machine — `APP_URL=http://localhost:4177` — and `APP_URL` is what password-reset and confirmation
