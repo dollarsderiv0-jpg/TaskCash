@@ -192,6 +192,25 @@ export function AppShell({ user, children }: { user: ShellUser; children: React.
               </p>
             </div>
             <NotificationBell initialUnread={user.unread} />
+            {/*
+              The only sign-out a phone can reach. The sidebar control further
+              down is inside a `hidden ... lg:flex` aside, so at the widths where
+              the bottom bar is the navigation there was no way to end a session
+              at all — the account menu simply did not exist on a handset. Same
+              request and same destination as the sidebar, so the two cannot
+              drift into signing out differently.
+            */}
+            <Button
+              variant="outline"
+              size="icon"
+              className="bg-card"
+              onClick={logout}
+              loading={loggingOut}
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              {loggingOut ? null : <LogOut className="h-4 w-4" aria-hidden />}
+            </Button>
           </div>
         </div>
       </header>

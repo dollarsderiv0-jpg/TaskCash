@@ -97,6 +97,40 @@ export function AdminShell({
     </nav>
   );
 
+  /*
+    The account block, shared by the desktop sidebar and the phone's expanded
+    menu. It has to be one element rather than two copies: the mobile panel below
+    renders only `nav`, which is why an administrator on a handset could look at
+    the whole operations list and still have no way to end their session.
+  */
+  const accountFooter = (
+    <div className="border-t border-border p-3">
+      <div className="flex items-center gap-3 rounded-xl px-2 py-2">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-xs font-semibold">
+          {initials(admin.fullName) || "AD"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{admin.fullName}</p>
+          <p className="truncate text-xs text-muted-foreground">{admin.role}</p>
+        </div>
+      </div>
+      <Button
+        variant="ghost"
+        className="mt-1 w-full justify-start gap-3 px-2 text-muted-foreground"
+        onClick={logout}
+      >
+        <LogOut className="h-4 w-4" aria-hidden />
+        Sign out
+      </Button>
+      <Button asChild variant="ghost" className="w-full justify-start gap-3 px-2 text-muted-foreground">
+        <Link href="/dashboard">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Back to app
+        </Link>
+      </Button>
+    </div>
+  );
+
   return (
     <div className="min-h-dvh bg-background lg:pl-72">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-72 flex-col border-r border-border bg-card/50 lg:flex">
@@ -109,31 +143,7 @@ export function AdminShell({
 
         <div className="flex-1 overflow-y-auto px-3 pb-4">{nav}</div>
 
-        <div className="border-t border-border p-3">
-          <div className="flex items-center gap-3 rounded-xl px-2 py-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-xs font-semibold">
-              {initials(admin.fullName) || "AD"}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{admin.fullName}</p>
-              <p className="truncate text-xs text-muted-foreground">{admin.role}</p>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            className="mt-1 w-full justify-start gap-3 px-2 text-muted-foreground"
-            onClick={logout}
-          >
-            <LogOut className="h-4 w-4" aria-hidden />
-            Sign out
-          </Button>
-          <Button asChild variant="ghost" className="w-full justify-start gap-3 px-2 text-muted-foreground">
-            <Link href="/dashboard">
-              <ArrowLeft className="h-4 w-4" aria-hidden />
-              Back to app
-            </Link>
-          </Button>
-        </div>
+        {accountFooter}
       </aside>
 
       {/* Mobile header */}
@@ -156,7 +166,10 @@ export function AdminShell({
       </header>
 
       {open ? (
-        <div className="border-b border-border bg-card px-4 py-3 lg:hidden">{nav}</div>
+        <div className="border-b border-border bg-card lg:hidden">
+          <div className="px-4 py-3">{nav}</div>
+          {accountFooter}
+        </div>
       ) : null}
 
       <main id="main" className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-8">
