@@ -1,9 +1,8 @@
 import { z } from "zod";
-import { requireSessionUser } from "@/lib/auth/guards";
+import { requireSessionUserAndClient } from "@/lib/auth/guards";
 import { ok, runApi } from "@/lib/api/response";
 import { parseBody } from "@/lib/validation/parse";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ApiError } from "@/lib/api/errors";
 
 const schema = z.object({
@@ -20,10 +19,19 @@ const schema = z.object({
  *   · redemption limit check
  *   · idempotent wallet credit
  *   · counter increment
+ *
+ * The RPC is called with the CALLER's client, not the service-role one, and
+ * that is a correctness requirement rather than a preference. `redeem_code`
+ * decides whose wallet to credit from `auth.uid()`. The service-role key is not
+ * a user token, so `auth.uid()` was null and the function raised UNAUTHORIZED
+ * before it ever looked at the code — every redemption answered 500 regardless
+ * of the code's validity. The caller's client carries their access token, so
+ * `auth.uid()` resolves to them, and because it is still their own client the
+ * RLS policies remain exactly as binding as they were.
  */
 export async function POST(request: Request) {
   return runApi(async () => {
-    const session = await requireSessionUser();
+    const { user: session, supabase } = await requireSessionUserAndClient();
 
     await enforceRateLimit(
       "redeem:code",
@@ -35,14 +43,25 @@ export async function POST(request: Request) {
 
     const input = await parseBody(request, schema);
 
-    const admin = createAdminSupabaseClient();
-
-    const { data, error } = await admin.rpc("redeem_code", {
+    const { data, error } = await supabase.rpc("redeem_code", {
       p_code: input.code.trim(),
     });
 
     if (error) {
       const msg = error.message ?? "Could not redeem that code.";
+      /*
+        Reachable if the session's token is rejected by PostgREST even though
+        this process resolved a user from it. A 401 is the honest answer: telling
+        the caller "could not redeem that code" would send them to check a code
+        that was never the problem.
+      */
+      if (msg.includes("UNAUTHORIZED")) {
+        throw new ApiError(
+          "UNAUTHORIZED",
+          "Your session has expired. Please sign in again to redeem a code.",
+          401,
+        );
+      }
       if (msg.includes("EXPIRED")) {
         throw new ApiError("REDEEM_CODE_EXPIRED", "That code has expired.", 400);
       }

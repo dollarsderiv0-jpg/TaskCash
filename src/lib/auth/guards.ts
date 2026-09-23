@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { ApiError } from "@/lib/api/errors";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
-import { getSessionUser, type SessionUser } from "@/lib/auth/session";
+import { getSessionContext, getSessionUser, type SessionContext, type SessionUser } from "@/lib/auth/session";
 import { logger } from "@/lib/logger";
 
 /**
@@ -17,6 +17,27 @@ export async function requireSessionUser(): Promise<SessionUser> {
     throw new ApiError("UNAUTHORIZED", "Please sign in to continue.", 401);
   }
   return user;
+}
+
+/**
+ * As `requireSessionUser()`, but also returns the client that carries the
+ * caller's credentials.
+ *
+ * For endpoints whose work happens inside a SECURITY DEFINER function that
+ * reads `auth.uid()` to decide *whose* wallet it credits. The service-role
+ * client carries no user token, so `auth.uid()` is null inside such a function
+ * and it refuses — which is exactly how `/api/redeem` came to answer 500 for
+ * every valid code while the code itself was never the problem.
+ *
+ * The authorisation is identical to `requireSessionUser()`; only the client that
+ * carries the already-established identity differs, and it is the caller's own.
+ */
+export async function requireSessionUserAndClient(): Promise<SessionContext> {
+  const context = await getSessionContext();
+  if (!context) {
+    throw new ApiError("UNAUTHORIZED", "Please sign in to continue.", 401);
+  }
+  return context;
 }
 
 /**

@@ -60,6 +60,36 @@ async function resolveCaller(): Promise<{
 }
 
 /**
+ * The signed-in user, together with the client that carries their credentials.
+ *
+ * `getSessionUser()` is this without the client. The client is needed for the
+ * case a bare `SessionUser` cannot serve: a SECURITY DEFINER function that reads
+ * `auth.uid()` to decide who it is acting for. The service-role client carries
+ * no user token, so `auth.uid()` is null inside such a function and it refuses
+ * the call — which is why `/api/redeem` answered 500 for every valid code.
+ *
+ * Both are resolved from ONE authentication, so returning the client does not
+ * add a second token validation to a request.
+ */
+export type SessionContext = {
+  user: SessionUser;
+  /**
+   * The caller's own client, never a privileged one. The key stays the
+   * *publishable* one, so Row Level Security still authorises every read —
+   * the token narrows access, it never widens it.
+   */
+  supabase: SupabaseLike;
+};
+
+export async function getSessionContext(): Promise<SessionContext | null> {
+  const caller = await resolveCaller();
+  if (!caller) return null;
+  const user = await loadProfileAndWallet(caller.client, caller.user);
+  if (!user) return null;
+  return { user, supabase: caller.client };
+}
+
+/**
  * Resolves the signed-in user, however they authenticated.
  *
  * Profile and wallet reads run through the caller's own client, so the row
@@ -67,9 +97,7 @@ async function resolveCaller(): Promise<{
  * above decides *who* is asking, never *what* they may see.
  */
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const caller = await resolveCaller();
-  if (!caller) return null;
-  return loadProfileAndWallet(caller.client, caller.user);
+  return (await getSessionContext())?.user ?? null;
 }
 
 type SupabaseLike = Awaited<ReturnType<typeof createServerSupabaseClient>>;
