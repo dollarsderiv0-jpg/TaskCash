@@ -74,6 +74,32 @@ const PASSTHROUGH = [
   "SUPABASE_JWKS_URL",
   "SUPABASE_SECRET_KEY",
   "AUTH_SECRET",
+  /*
+    M-Pesa (Daraja) collection credentials.
+
+    These were missing, and the omission did not look like one: MPESA_ENV, the
+    transaction type and every callback URL were already being pushed, so a
+    deployment ended up looking configured while the four values that actually
+    authenticate against Safaricom were absent — and the only way to supply them
+    was by hand in a web dashboard. SECRET_TYPE below already named three of
+    them, so the intent was always here and the list had simply not caught up.
+
+    Widening this list is safe because it is not this list that decides whether
+    credentials may travel. mpesaSyncRefusal() rule 1 is checked before the first
+    push: credentials leave only from a tree that POSITIVELY declares
+    MPESA_ENV=production. A sandbox-configured tree is refused, and so is one
+    whose MPESA_ENV is merely absent — at runtime that resolves to the sandbox,
+    which makes it the tree most likely to be holding sandbox keys and the one
+    least likely to look like it.
+  */
+  "MPESA_CONSUMER_KEY",
+  "MPESA_CONSUMER_SECRET",
+  "MPESA_SHORTCODE",
+  "MPESA_PASSKEY",
+  // Callback hardening. Safaricom does not sign callbacks, so production
+  // preflight wants one of the secret/allowlist pair; the secret is the portable
+  // one because it does not depend on where the deployment egresses from.
+  "MPESA_CALLBACK_SECRET",
   // PayHero credentials, read from .env.local and pushed without ever being
   // printed. Absent ones are reported as skipped rather than set to empty,
   // which would read as "configured" to the readiness checks.
@@ -88,16 +114,31 @@ const PASSTHROUGH = [
  * URL-shaped variables, derived from --url. These must be the real deployed
  * origin: the M-Pesa ones are registered with Safaricom and mpesa/config.ts
  * refuses http:// and refuses localhost in production.
+ *
+ * The `?token=` suffix is NOT cosmetic. checkMpesaCallbackAuthenticity rejects a
+ * callback with a 401 whenever MPESA_CALLBACK_SECRET is configured and the request
+ * carries neither an x-mpesa-signature nor a token — and Safaricom sends neither.
+ * So pushing a secret alongside a tokenless URL would refuse every genuine STK
+ * result on arrival, and deposits would settle only ever via the status query.
+ * The three M-Pesa callbacks are therefore minted with the token when a secret
+ * exists, which is also what `check:daraja` asserts.
  */
-const fromUrl = (base) => ({
-  APP_URL: base,
-  NEXT_PUBLIC_APP_URL: base,
-  // PayHero's callback. This is the URL to paste into the PayHero dashboard.
-  PAYHERO_CALLBACK_URL: `${base}/api/payments/payhero/callback`,
-  MPESA_CALLBACK_URL: `${base}/api/payments/mpesa/callback`,
-  MPESA_B2C_RESULT_URL: `${base}/api/payments/mpesa/b2c/result`,
-  MPESA_B2C_QUEUE_TIMEOUT_URL: `${base}/api/payments/mpesa/b2c/timeout`,
-});
+const fromUrl = (base, mpesaCallbackToken) => {
+  const withToken = (path) =>
+    mpesaCallbackToken
+      ? `${base}${path}?token=${encodeURIComponent(mpesaCallbackToken)}`
+      : `${base}${path}`;
+
+  return {
+    APP_URL: base,
+    NEXT_PUBLIC_APP_URL: base,
+    // PayHero's callback. This is the URL to paste into the PayHero dashboard.
+    PAYHERO_CALLBACK_URL: `${base}/api/payments/payhero/callback`,
+    MPESA_CALLBACK_URL: withToken("/api/payments/mpesa/callback"),
+    MPESA_B2C_RESULT_URL: withToken("/api/payments/mpesa/b2c/result"),
+    MPESA_B2C_QUEUE_TIMEOUT_URL: withToken("/api/payments/mpesa/b2c/timeout"),
+  };
+};
 
 /**
  * Vercel stores variables as `secret` by default, which makes them write-only:
@@ -204,8 +245,16 @@ function main() {
     if (!base.startsWith("https://")) {
       throw new Error("--url must be https:// — Safaricom rejects http and localhost callbacks");
     }
-    for (const [name, value] of Object.entries(fromUrl(base))) plan.set(name, value);
+    const callbackToken = env.get("MPESA_CALLBACK_SECRET");
+    for (const [name, value] of Object.entries(fromUrl(base, callbackToken))) {
+      plan.set(name, value);
+    }
     console.log(`URL-derived variables use ${base}`);
+    if (callbackToken) {
+      console.log(
+        "MPESA_CALLBACK_SECRET is set, so the M-Pesa callback URLs carry ?token= (without it Safaricom's tokenless results would be refused 401).",
+      );
+    }
   } else {
     console.log("No --url given: APP_URL and the M-Pesa callback URLs are NOT being set.");
   }
