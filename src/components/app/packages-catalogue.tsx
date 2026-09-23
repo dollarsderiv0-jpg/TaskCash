@@ -1,154 +1,63 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  CalendarClock,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Lock,
-  Package as PackageIcon,
+  PlayCircle,
   RefreshCw,
+  ShieldCheck,
   Smartphone,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox, Field, Input } from "@/components/ui/fields";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, Input } from "@/components/ui/fields";
 import { Alert, Badge, EmptyState, Progress } from "@/components/ui/misc";
 import { useToast } from "@/components/ui/toast";
 import { apiRequest, newIdempotencyKey } from "@/lib/client/api";
 import { useCountdown } from "@/lib/client/use-countdown";
+import { normalisePhone } from "@/lib/countries";
 import { formatMoney } from "@/lib/money/format";
-import type { DepositBonusTier } from "@/server/services/packages";
-import type { PackageWithUsage } from "@/lib/types";
+import type { CataloguePackage } from "@/server/services/packages";
 
 /**
- * Which deposit bonus this price would earn, or null.
+ * The package catalogue for Watch & Earn.
  *
- * The tiers arrive sorted descending from the server, and the first threshold the
- * price clears wins — the same rule `apply_deposit_bonus` applies in SQL, so the
- * page cannot advertise a tier the settlement function would not pay.
- */
-function bonusFor(tiers: DepositBonusTier[], price: number): DepositBonusTier | null {
-  return tiers.find((tier) => price >= tier.min) ?? null;
-}
-
-/**
- * The package catalogue.
+ * WHAT THIS COMPONENT IS ALLOWED TO DECIDE, AND WHAT IT IS NOT
+ * -----------------------------------------------------------
+ * Every figure on a card — the price, the daily ceiling, the total ceiling, the
+ * term, each video's reward — is read from the server render. A purchase ends
+ * with `router.refresh()` and the numbers are re-read; there is no optimistic
+ * balance and no locally incremented total anywhere in this file.
  *
- * Two things this component is careful about:
+ * The countdown is the one thing computed here, and it is presentation only. The
+ * allowance that actually gates a reward is computed in the database against the
+ * operator's midnight, so a device clock that is wrong, paused or throttled
+ * cannot buy the user a single extra shilling. Expiry is likewise decided on the
+ * server (`tier.expired`) rather than by comparing `expiresAt` to this device's
+ * idea of now.
  *
- *   · It never shows a balance or an allowance it computed itself. Every figure
- *     comes from the server render; a purchase ends with `router.refresh()` and
- *     the numbers are re-read. There is no optimistic balance anywhere.
- *   · The countdown is presentation only. The allowance that actually gates a
- *     reward is computed in the database against the operator's midnight, so a
- *     clock on this device that is wrong, paused or throttled cannot buy the
- *     user a single extra shilling.
+ * A successful payment request means an STK prompt was SENT, and nothing more.
+ * The package is called active only when the server reports that the provider
+ * confirmed the payment AND that the activation happened.
  */
 
-function AllowanceCard({ tier, currency }: { tier: PackageWithUsage; currency: string }) {
-  const countdown = useCountdown(tier.resetsAt);
-
-  const spent = Math.max(0, tier.daily_earning_cap - tier.remainingToday);
-  const percent =
-    tier.daily_earning_cap > 0 ? Math.min(100, (spent / tier.daily_earning_cap) * 100) : 0;
-  const exhausted = tier.daily_earning_cap > 0 && tier.remainingToday <= 0;
-
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Earned today from this package
-          </p>
-          <p className="mt-1 text-xl font-bold tracking-tight">
-            {formatMoney(tier.earnedToday, currency)}
-            <span className="ml-1.5 text-sm font-medium text-muted-foreground">
-              of {formatMoney(tier.daily_earning_cap, currency)}
-            </span>
-          </p>
-        </div>
-        {exhausted ? (
-          <Badge variant="warning">
-            <Clock className="h-3 w-3" aria-hidden />
-            Limit reached
-          </Badge>
-        ) : (
-          <Badge variant="success">
-            <CheckCircle2 className="h-3 w-3" aria-hidden />
-            Active
-          </Badge>
-        )}
-      </div>
-
-      <Progress
-        className="mt-3"
-        value={percent}
-        label={`Package allowance used: ${Math.round(percent)}%`}
-      />
-
-      <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <dt className="text-xs text-muted-foreground">Still available today</dt>
-          <dd className="mt-0.5 font-semibold">{formatMoney(tier.remainingToday, currency)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Allowance resets in</dt>
-          <dd className="mt-0.5 font-semibold tabular-nums">{countdown ?? "—"}</dd>
-        </div>
-      </dl>
-
-      {/*
-        The lifetime ceiling and the term, for a package the user already owns. Both
-        come from the purchase's own snapshot, so re-pricing the tier cannot move
-        what this buyer was sold. `lifetimeRemaining === 0` is "finished", while
-        null is "no ceiling" — the two must not render the same.
-      */}
-      {tier.lifetime_earning_cap || tier.expiresAt ? (
-        <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3 text-sm">
-          {tier.lifetime_earning_cap ? (
-            <div>
-              <dt className="text-xs text-muted-foreground">Left in total</dt>
-              <dd className="mt-0.5 font-semibold">
-                {formatMoney(tier.lifetimeRemaining ?? 0, currency)}
-                <span className="ml-1 text-xs font-normal text-muted-foreground">
-                  of {formatMoney(tier.lifetime_earning_cap, currency)}
-                </span>
-              </dd>
-            </div>
-          ) : null}
-          {tier.expiresAt ? (
-            <div>
-              <dt className="text-xs text-muted-foreground">Earning until</dt>
-              <dd className="mt-0.5 font-semibold">
-                {new Date(tier.expiresAt).toLocaleDateString(undefined, {
-                  day: "numeric",
-                  month: "short",
-                  year: "numeric",
-                })}
-              </dd>
-            </div>
-          ) : null}
-        </dl>
-      ) : null}
-
-      {tier.lifetime_earning_cap && tier.lifetimeRemaining !== null && tier.lifetimeRemaining <= 0 ? (
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          This package has paid its full earning allowance, so its videos no longer add to your
-          balance. Activating it again starts a new allowance — the per-day and total limits apply
-          to each purchase separately.
-        </p>
-      ) : exhausted ? (
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          You have earned the full daily allowance from this package. It comes back at midnight
-          (East Africa Time) — until then you can still earn from videos that are not part of a
-          package.
-        </p>
-      ) : null}
-    </div>
-  );
-}
+/** How many of a package's videos a card lists before offering the rest. */
+const VISIBLE_VIDEOS = 5;
 
 type PackagePaymentResult = {
   depositId: string;
@@ -170,42 +79,100 @@ type PackagePaymentStatus = {
   packageActivated?: { packageName: string } | null;
 };
 
+/** The state a card is in, as one value rather than three booleans. */
+function packageState(tier: CataloguePackage): "active" | "expired" | "available" | "unavailable" {
+  if (tier.daily_earning_cap <= 0) return "unavailable";
+  if (!tier.owned) return "available";
+  return tier.expired ? "expired" : "active";
+}
+
 /**
- * Pay for a package directly by M-Pesa.
+ * One video and what this package pays for it.
  *
- * The rule this component is built around: a successful request means an STK
- * prompt was SENT, and that is all it means. The package is stated as active only
- * when the server says the provider confirmed the payment AND that the activation
- * happened — `packageActivated` on the verify response, never a status this
- * component interprets for itself. The two are told apart deliberately: a
- * confirmed payment whose activation failed is a real outcome, and reporting it
- * as success would leave the buyer waiting for a package that is not coming.
- *
- * The price shown is the tier's; the amount sent is for shape only, and the
- * server discards it in favour of the package row's own price.
+ * The rate is per video and per package (migration 0020): the same video can pay
+ * 10 under one tier and 30 under another, so a "reward" column is the only
+ * honest way to show it. A single "up to X per video" figure would be a claim
+ * about an average that no row in the database supports.
  */
-function PayByMpesa({
+function VideoRow({
+  index,
+  title,
+  rewardAmount,
+  currency,
+}: {
+  index: number;
+  title: string;
+  rewardAmount: number;
+  currency: string;
+}) {
+  return (
+    <li className="flex items-center gap-2 py-1.5">
+      <span className="w-4 shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+        {index}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-xs" title={title}>
+        {title}
+      </span>
+      <span className="shrink-0 text-xs font-semibold tabular-nums">
+        {formatMoney(rewardAmount, currency, { decimals: 0 })}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * Pay for a package by M-Pesa.
+ *
+ * Three steps, and the middle one is not decoration. The buyer types a number,
+ * then sees exactly what will be charged and where it will be sent, and only
+ * then does anything leave their account. Money requests that appear on a phone
+ * with no preceding confirmation are how people are persuaded to approve a
+ * payment they did not intend, so the confirmation states the amount and the
+ * number together, in one place, before the prompt is raised.
+ *
+ * The prompt is then polled rather than trusted: the dialog waits for the
+ * provider's confirmation, because the only thing this component knows after a
+ * successful request is that a prompt was sent.
+ */
+function PackagePurchaseDialog({
   tier,
   currency,
+  balance,
   defaultPhone,
+  country,
+  open,
+  onOpenChange,
   onActivated,
-  collapsed,
 }: {
-  tier: PackageWithUsage;
+  tier: CataloguePackage;
   currency: string;
+  balance: number;
   defaultPhone: string;
+  country: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onActivated: () => void;
-  /** True when the wallet can already cover the price, so M-Pesa starts folded away. */
-  collapsed: boolean;
 }) {
   const { toast } = useToast();
-  const [open, setOpen] = React.useState(!collapsed);
+  const [step, setStep] = React.useState<"phone" | "confirm" | "pending">("phone");
   const [phone, setPhone] = React.useState(defaultPhone);
-  const [authorised, setAuthorised] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState<PackagePaymentResult | null>(null);
+
+  const price = formatMoney(tier.price, currency);
+  const affordable = balance >= tier.price;
+
+  // Each time the dialog opens it starts from the first step, so a buyer who
+  // closed it mid-payment is not dropped back into a stale confirmation for a
+  // number they have since changed.
+  React.useEffect(() => {
+    if (!open) return;
+    setStep("phone");
+    setError(null);
+    setPending(null);
+  }, [open]);
 
   const settle = React.useCallback(
     (result: PackagePaymentStatus) => {
@@ -218,56 +185,35 @@ function PayByMpesa({
           description: result.message,
           tone: "success",
         });
-        // Re-read the authoritative balance and allowance from the server rather
-        // than adjusting anything locally.
+        onOpenChange(false);
+        // The authoritative balance, allowance and video list all come from the
+        // server after this; nothing is adjusted locally.
         onActivated();
         return;
       }
 
       toast({
         title:
-          result.status === "PENDING"
-            ? "Still waiting on the provider"
-            : "Payment not completed",
+          result.status === "PENDING" ? "Still waiting on the provider" : "Payment not completed",
         description: result.message,
         tone: result.status === "PENDING" ? "info" : "warning",
       });
 
-      // A terminal outcome is finished; PENDING keeps the prompt on screen so
-      // the buyer can approve late rather than re-raising a second prompt.
+      // A terminal outcome ends the prompt. PENDING keeps it on screen so the
+      // buyer can approve late instead of raising a second prompt.
       if (result.status !== "PENDING") setPending(null);
     },
-    [onActivated, toast],
+    [onActivated, onOpenChange, toast],
   );
 
-  async function verify(depositId: string) {
-    setChecking(true);
-
-    const response = await apiRequest<PackagePaymentStatus>("/api/deposits/verify", {
-      method: "POST",
-      body: { depositId },
-    });
-
-    setChecking(false);
-
-    if (!response.ok) {
-      toast({ title: "Could not check yet", description: response.message, tone: "warning" });
-      return;
-    }
-
-    settle(response.data);
-  }
-
   /*
-    Poll while a prompt is open.
+    Poll while a prompt is open. Confirmation usually lands within seconds of the
+    buyer entering their PIN, and the alternative is a screen that says nothing.
 
-    A confirmation usually lands within seconds of the buyer entering their PIN,
-    and the alternative is someone staring at a screen that tells them nothing.
-    Bounded to 15 attempts at 6 seconds — comfortably inside the verify
-    endpoint's 30-per-10-minutes allowance — so a prompt that is never answered
-    costs a handful of requests instead of a rate limit. The interval reads
-    `pending.depositId` and not the component's other state, so it cannot be torn
-    down and re-created on every render before its first tick ever fires.
+    Bounded to 15 attempts at 6 seconds, comfortably inside the verify endpoint's
+    allowance, so a prompt that is never answered costs a handful of requests
+    rather than a rate limit. The interval reads `pending.depositId` and not any
+    other state, so it cannot be torn down and re-created before its first tick.
   */
   React.useEffect(() => {
     if (!pending) return;
@@ -292,26 +238,17 @@ function PayByMpesa({
     return () => window.clearInterval(id);
   }, [pending, settle]);
 
-  async function pay(event: React.FormEvent) {
-    event.preventDefault();
+  /** Raises the prompt. Runs only from the confirmation step. */
+  async function pay() {
     setError(null);
-
-    if (phone.trim().length < 7) {
-      setError("Enter the M-Pesa number to charge.");
-      return;
-    }
-    if (!authorised) {
-      setError("Please confirm you authorise this payment.");
-      return;
-    }
-
     setLoading(true);
 
     const response = await apiRequest<PackagePaymentResult>("/api/deposits/create", {
       method: "POST",
-      // One key per attempt, so a double-tap or a retry cannot raise two prompts.
       body: {
         packageId: tier.id,
+        // Sent for shape only: the server charges the package row's own price and
+        // ignores anything here, which is what stops a client picking its price.
         amount: tier.price,
         phone: phone.trim(),
         idempotencyKey: newIdempotencyKey("package-payment"),
@@ -323,11 +260,12 @@ function PayByMpesa({
 
     if (!response.ok) {
       setError(response.message);
+      setStep("phone");
       return;
     }
 
     setPending(response.data);
-    setAuthorised(false);
+    setStep("pending");
     toast({
       title: "Check your phone and enter your M-Pesa PIN",
       description:
@@ -337,250 +275,81 @@ function PayByMpesa({
     });
   }
 
-  if (!open) {
-    return (
-      <Button variant="outline" className="w-full" onClick={() => setOpen(true)}>
-        <Smartphone className="h-4 w-4" aria-hidden />
-        Or pay {formatMoney(tier.price, currency)} by M-Pesa
-      </Button>
-    );
-  }
-
-  if (pending) {
-    return (
-      <Alert variant="info" title="Check your phone and enter your M-Pesa PIN">
-        <div className="space-y-3">
-          <p>
-            A payment prompt for {formatMoney(pending.amount, pending.currency)} was sent to{" "}
-            {pending.phone}. {tier.name} activates as soon as the provider confirms the payment — this
-            page checks by itself.
-          </p>
-          <p className="font-mono text-[11px]">Reference {pending.merchantReference}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => verify(pending.depositId)} loading={checking}>
-              <RefreshCw className="h-4 w-4" aria-hidden />
-              I have paid — check now
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setPending(null)}>
-              Done
-            </Button>
-          </div>
-        </div>
-      </Alert>
-    );
-  }
-
-  return (
-    <form onSubmit={pay} className="space-y-3" noValidate>
-      {error ? (
-        <p className="text-xs font-medium text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      <Field label="M-Pesa number" htmlFor={`mpesa-phone-${tier.id}`}>
-        <Input
-          id={`mpesa-phone-${tier.id}`}
-          type="tel"
-          inputMode="tel"
-          autoComplete="tel"
-          placeholder="07XXXXXXXX"
-          value={phone}
-          onChange={(event) => setPhone(event.target.value)}
-        />
-      </Field>
-
-      <label className="flex items-start gap-3 text-xs">
-        <Checkbox
-          checked={authorised}
-          onCheckedChange={(checked) => setAuthorised(checked === true)}
-          className="mt-0.5"
-        />
-        <span className="leading-relaxed text-muted-foreground">
-          I authorise a payment of{" "}
-          <strong className="text-foreground">{formatMoney(tier.price, currency)}</strong> to be
-          collected from my M-Pesa account via our payment partner. I understand this is a payment for
-          platform services and is not an investment.
-        </span>
-      </label>
-
-      <Button type="submit" className="w-full" size="lg" loading={loading}>
-        <Smartphone className="h-4 w-4" aria-hidden />
-        Pay {formatMoney(tier.price, currency)} with M-Pesa
-      </Button>
-
-      {collapsed ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="w-full"
-          onClick={() => setOpen(false)}
-        >
-          Use my wallet balance instead
-        </Button>
-      ) : null}
-    </form>
-  );
-}
-
-/**
- * One line of a package's specification.
- *
- * The card used to state the same facts three times over — price and daily limit
- * as two big figures, then the daily limit AGAIN inside an "Earning limits" box
- * alongside the total and the term. Everything a buyer needs to compare two tiers
- * is five labelled values, so it is one table: faster to read than three blocks
- * of prose, and impossible to render inconsistently because there is one place
- * each figure comes from.
- */
-function SpecRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 px-3 py-2">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={strong ? "text-sm font-bold tracking-tight" : "text-sm font-semibold"}>
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function TierCard({
-  tier,
-  currency,
-  balance,
-  defaultPhone,
-  bonusTiers,
-  onPurchased,
-}: {
-  tier: PackageWithUsage;
-  currency: string;
-  balance: number;
-  defaultPhone: string;
-  bonusTiers: DepositBonusTier[];
-  onPurchased: () => void;
-}) {
-  const { toast } = useToast();
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const affordable = balance >= tier.price;
-  const bonus = bonusFor(bonusTiers, tier.price);
-
-  async function buy() {
-    setLoading(true);
+  /** Buys out of the wallet balance instead. The other real payment path. */
+  async function payFromWallet() {
     setError(null);
+    setLoading(true);
 
     const response = await apiRequest<{ message: string }>("/api/packages/purchase", {
       method: "POST",
       body: { packageId: tier.id },
     });
 
+    setLoading(false);
+
     if (!response.ok) {
-      // The API's messages are already mapped to safe, human text server-side.
       setError(response.message);
-      setLoading(false);
       return;
     }
 
     toast({ title: response.data.message, tone: "success" });
-    setLoading(false);
-    // Re-read the authoritative balance and allowance from the server rather
-    // than adjusting anything locally.
-    onPurchased();
+    onOpenChange(false);
+    onActivated();
+  }
+
+  function toConfirm(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+
+    /*
+      Validated with the same function the server settles with, against the same
+      country, so a number this dialog accepts is a number the deposit service
+      will accept — rather than a looser check here and a rejection later.
+    */
+    const normalised = normalisePhone(phone, country || "KE");
+    if (!normalised.ok) {
+      setError(normalised.reason);
+      return;
+    }
+
+    setPhone(normalised.e164.replace(/^\+/, ""));
+    setStep("confirm");
+  }
+
+  async function verify(depositId: string) {
+    setChecking(true);
+    const response = await apiRequest<PackagePaymentStatus>("/api/deposits/verify", {
+      method: "POST",
+      body: { depositId },
+    });
+    setChecking(false);
+
+    if (!response.ok) {
+      toast({ title: "Could not check yet", description: response.message, tone: "warning" });
+      return;
+    }
+
+    settle(response.data);
   }
 
   return (
-    <Card className="flex h-full flex-col">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-orangeBrand-500/12">
-              <PackageIcon className="h-5 w-5 text-orangeBrand-500" aria-hidden />
-            </span>
-            <div>
-              <CardTitle className="text-base">{tier.name}</CardTitle>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {tier.videoCount > 0
-                  ? `${tier.videoCount} video${tier.videoCount === 1 ? "" : "s"} included`
-                  : "Videos being added"}
-              </p>
-            </div>
-          </div>
-          {tier.owned ? (
-            <Badge variant="success">Active</Badge>
-          ) : (
-            <Badge variant="outline">Not active</Badge>
-          )}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Buy {tier.name}</DialogTitle>
+          <DialogDescription>
+            {step === "pending"
+              ? "Waiting for the payment provider to confirm."
+              : "Paid from M-Pesa. The package activates only after the provider confirms your payment."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-baseline justify-between rounded-xl border border-border px-4 py-3">
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+            Package price
+          </span>
+          <span className="text-lg font-bold tabular-nums">{price}</span>
         </div>
-      </CardHeader>
-
-      <CardContent className="flex flex-1 flex-col gap-4">
-        {tier.description ? (
-          <p className="text-sm leading-relaxed text-muted-foreground">{tier.description}</p>
-        ) : null}
-
-        {/*
-          The whole offer, in one table: what it costs, what it unlocks, what it
-          can pay per day and in total, and over what window.
-
-          "Most per day" and "Most in total" rather than "Daily earning limit" and
-          "In total": a ceiling is the most it CAN pay, and saying so in the label
-          is what stops the figures reading as a quotation. The one line under the
-          table says the rest — the ceilings are only reachable while the campaigns
-          behind the videos still have budget.
-        */}
-        {tier.daily_earning_cap > 0 ? (
-          <div className="rounded-xl border border-border">
-            <dl className="divide-y divide-border">
-              <SpecRow label="Price" value={formatMoney(tier.price, currency)} strong />
-              <SpecRow
-                label="Videos"
-                value={tier.videoCount > 0 ? String(tier.videoCount) : "Being added"}
-              />
-              <SpecRow
-                label="Most per day"
-                value={formatMoney(tier.daily_earning_cap, currency)}
-              />
-              {tier.lifetime_earning_cap ? (
-                <SpecRow
-                  label="Most in total"
-                  value={formatMoney(tier.lifetime_earning_cap, currency)}
-                />
-              ) : null}
-              {tier.duration_days ? (
-                <SpecRow
-                  label="Earning period"
-                  value={`${tier.duration_days} days`}
-                />
-              ) : null}
-            </dl>
-          </div>
-        ) : null}
-
-        {tier.daily_earning_cap > 0 ? (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Ceilings, not promises — each reward is paid only while its campaign still has
-            budget.
-          </p>
-        ) : null}
-
-        {/*
-          The deposit bonus, read from the setting the settlement function reads.
-          The applicable tier is the first whose threshold the price clears — the
-          same "descending, first match wins" rule apply_deposit_bonus uses.
-        */}
-        {!tier.owned && bonus ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-              Deposit bonus
-            </p>
-            <p className="mt-1 text-sm font-bold text-emerald-800">
-              +{formatMoney(bonus.bonus, currency)} credited on a deposit of{" "}
-              {formatMoney(bonus.min, currency)} or more
-            </p>
-          </div>
-        ) : null}
 
         {error ? (
           <p className="text-xs font-medium text-destructive" role="alert">
@@ -588,66 +357,344 @@ function TierCard({
           </p>
         ) : null}
 
-        <div className="mt-auto">
-          {tier.owned ? (
-            <AllowanceCard tier={tier} currency={currency} />
-          ) : tier.daily_earning_cap <= 0 ? (
-            /*
-              Fail-closed and stated plainly. The server would refuse this
-              purchase (PACKAGE_NOT_AVAILABLE); showing a disabled button with
-              the reason beats letting someone tap it and meet an error.
-            */
+        {step === "phone" ? (
+          <form onSubmit={toConfirm} className="space-y-4" noValidate>
+            <Field label="M-Pesa phone number" htmlFor={`mpesa-phone-${tier.id}`}>
+              <Input
+                id={`mpesa-phone-${tier.id}`}
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="07XXXXXXXX"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+              />
+            </Field>
+
+            <Button type="submit" className="w-full" size="lg">
+              <Smartphone className="h-4 w-4" aria-hidden />
+              Confirm &amp; Pay
+            </Button>
+
+            {affordable ? (
+              <button
+                type="button"
+                onClick={payFromWallet}
+                disabled={loading}
+                className="w-full text-center text-xs text-muted-foreground underline-offset-4 hover:underline disabled:opacity-50"
+              >
+                Or pay {formatMoney(tier.price, currency)} from your wallet balance
+              </button>
+            ) : null}
+          </form>
+        ) : null}
+
+        {step === "confirm" ? (
+          <div className="space-y-4">
+            <Alert variant="warning" title="Confirm this payment">
+              <p>
+                You are about to pay <strong>{price}</strong> using M-Pesa.
+              </p>
+              <p className="mt-2">
+                Phone number: <strong className="tabular-nums">{phone}</strong>
+              </p>
+              <p className="mt-2 text-xs">
+                {tier.name} activates only once the provider confirms the payment. If it is
+                cancelled, fails or is left pending, nothing is charged and the package stays
+                inactive.
+              </p>
+            </Alert>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStep("phone")}
+                disabled={loading}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={pay} loading={loading} size="lg">
+                <ShieldCheck className="h-4 w-4" aria-hidden />
+                Confirm &amp; Pay
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : null}
+
+        {step === "pending" && pending ? (
+          <div className="space-y-4">
+            <Alert variant="info" title="Check your phone and enter your M-Pesa PIN">
+              <p>
+                A payment prompt for {formatMoney(pending.amount, pending.currency)} was sent to{" "}
+                {pending.phone}. This dialog checks by itself — you do not need to refresh.
+              </p>
+              <p className="mt-2 font-mono text-[11px]">Reference {pending.merchantReference}</p>
+            </Alert>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => onOpenChange(false)}
+                disabled={checking}
+              >
+                Close
+              </Button>
+              <Button
+                type="button"
+                onClick={() => verify(pending.depositId)}
+                loading={checking}
+                size="lg"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden />
+                I have paid — check now
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : null}
+
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Earnings come from the campaigns behind each video and depend on their remaining
+          budgets. The daily and total figures are ceilings, not promised returns.
+        </p>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** One package, as a card. Every figure on it came from the server render. */
+function PackageCard({
+  tier,
+  currency,
+  balance,
+  defaultPhone,
+  country,
+  onChanged,
+}: {
+  tier: CataloguePackage;
+  currency: string;
+  balance: number;
+  defaultPhone: string;
+  country: string;
+  onChanged: () => void;
+}) {
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [showAllVideos, setShowAllVideos] = React.useState(false);
+  const countdown = useCountdown(tier.resetsAt);
+
+  const state = packageState(tier);
+  const videos = tier.videos;
+  const listed = showAllVideos ? videos : videos.slice(0, VISIBLE_VIDEOS);
+  const hidden = videos.length - listed.length;
+
+  const spent = Math.max(0, tier.daily_earning_cap - tier.remainingToday);
+  const percent =
+    tier.daily_earning_cap > 0 ? Math.min(100, (spent / tier.daily_earning_cap) * 100) : 0;
+
+  const daysLeft =
+    tier.expiresAt && !tier.expired
+      ? Math.max(
+          0,
+          Math.ceil((new Date(tier.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
+        )
+      : null;
+
+  return (
+    <Card className="flex flex-col overflow-hidden">
+      {/* Header: what it is, and whether you hold it. */}
+      <div className="flex items-start justify-between gap-3 border-b border-border bg-secondary/30 px-5 py-4">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-bold uppercase tracking-wide">{tier.name}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {videos.length > 0
+              ? `${videos.length} video${videos.length === 1 ? "" : "s"}`
+              : "Videos being added"}
+            {tier.duration_days ? ` · ${tier.duration_days} days` : ""}
+          </p>
+        </div>
+        {state === "active" ? (
+          <Badge variant="success">
+            <CheckCircle2 className="h-3 w-3" aria-hidden />
+            Active
+          </Badge>
+        ) : state === "expired" ? (
+          <Badge variant="warning">
+            <CalendarClock className="h-3 w-3" aria-hidden />
+            Expired
+          </Badge>
+        ) : (
+          <Badge variant="outline">Not active</Badge>
+        )}
+      </div>
+
+      <CardContent className="flex flex-1 flex-col gap-4 p-5">
+        {/* Price, and the term it buys. */}
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-3xl font-bold tracking-tight tabular-nums">
+              {formatMoney(tier.price, currency, { decimals: 0 })}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {tier.duration_days
+                ? `one-off, earnable for ${tier.duration_days} days`
+                : "one-off, no expiry"}
+            </p>
+          </div>
+          {state === "active" && daysLeft !== null ? (
+            <p className="shrink-0 text-right text-xs text-muted-foreground">
+              <span className="block font-semibold text-foreground">{daysLeft}</span>
+              day{daysLeft === 1 ? "" : "s"} remaining
+            </p>
+          ) : null}
+        </div>
+
+        {/* The ceilings, side by side. Small, labelled, and the same two facts a
+            buyer compares across tiers. */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl border border-border px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Maximum daily
+            </p>
+            <p className="mt-0.5 text-sm font-bold tabular-nums">
+              {formatMoney(tier.daily_earning_cap, currency, { decimals: 0 })}
+            </p>
+          </div>
+          <div className="rounded-xl border border-border px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Maximum total
+            </p>
+            <p className="mt-0.5 text-sm font-bold tabular-nums">
+              {tier.lifetime_earning_cap
+                ? formatMoney(tier.lifetime_earning_cap, currency, { decimals: 0 })
+                : "No ceiling"}
+            </p>
+          </div>
+        </div>
+
+        {/* What you are actually buying: the videos, each with its own reward. */}
+        {videos.length > 0 ? (
+          <div className="rounded-xl border border-border">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Videos and rewards
+              </p>
+              <p className="text-[10px] tabular-nums text-muted-foreground">{videos.length}</p>
+            </div>
+            <ul className="divide-y divide-border px-3 py-1">
+              {listed.map((video, index) => (
+                <VideoRow
+                  key={video.id}
+                  index={index + 1}
+                  title={video.title}
+                  rewardAmount={video.rewardAmount}
+                  currency={currency}
+                />
+              ))}
+            </ul>
+            {hidden > 0 || showAllVideos ? (
+              <button
+                type="button"
+                onClick={() => setShowAllVideos((current) => !current)}
+                className="flex w-full items-center justify-center gap-1 border-t border-border py-2 text-[11px] font-semibold text-muted-foreground hover:bg-secondary/50"
+              >
+                <ChevronDown
+                  className={
+                    showAllVideos ? "h-3 w-3 rotate-180 transition-transform" : "h-3 w-3 transition-transform"
+                  }
+                  aria-hidden
+                />
+                {showAllVideos ? "Show fewer" : `Show ${hidden} more`}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* An owned package reports today's usage against the real allowance. */}
+        {state === "active" ? (
+          <div>
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-xs text-muted-foreground">Earned today</p>
+              <p className="text-xs font-semibold tabular-nums">
+                {formatMoney(tier.earnedToday, currency, { decimals: 0 })}
+                <span className="font-normal text-muted-foreground">
+                  {" "}
+                  of {formatMoney(tier.daily_earning_cap, currency, { decimals: 0 })}
+                </span>
+              </p>
+            </div>
+            <Progress
+              className="mt-1.5"
+              value={percent}
+              label={`${tier.name} allowance used: ${Math.round(percent)}%`}
+            />
+            {countdown ? (
+              <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Clock className="h-3 w-3" aria-hidden />
+                Allowance resets in {countdown}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {state === "expired" ? (
+          <p className="rounded-xl border border-dashed border-border p-3 text-[11px] leading-relaxed text-muted-foreground">
+            This package&apos;s earning period has ended, so its videos no longer pay. Activating it
+            again starts a new period and a new allowance.
+          </p>
+        ) : null}
+
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Ceilings, not promises — each reward is paid only while its campaign still has budget. No
+          guaranteed returns.
+        </p>
+
+        <div className="mt-auto space-y-2">
+          {state === "unavailable" ? (
             <Alert variant="warning" title="Not on sale yet">
               <p>
                 This package is still being set up. Its daily earning limit has not been published
                 yet, so it cannot be activated.
               </p>
             </Alert>
+          ) : state === "active" ? (
+            <Button asChild className="w-full" size="lg">
+              <Link href={`/dashboard/watch?package=${tier.id}`}>
+                <PlayCircle className="h-4 w-4" aria-hidden />
+                WATCH
+              </Link>
+            </Button>
           ) : (
-            <div className="space-y-3">
-              {affordable ? (
-                <>
-                  <Button className="w-full" size="lg" loading={loading} onClick={buy}>
-                    <Sparkles className="h-4 w-4" aria-hidden />
-                    {`Activate for ${formatMoney(tier.price, currency)}`}
-                  </Button>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Paid from your wallet balance ({formatMoney(balance, currency)} available).
-                  </p>
-                </>
-              ) : null}
-
-              {/*
-                M-Pesa, for the buyer whose wallet cannot cover the price — which
-                is everyone who has not been paid yet.
-
-                This replaced a disabled button reading "Not enough balance" and a
-                line saying how much more was needed. Both were true and neither
-                was useful: they named a shortfall and offered no way to close it,
-                so the only route to a package ran through the deposit page and a
-                second decision. The shortfall is deliberately NOT offered as a
-                pay-this-much button — a top-up of the difference is usually below
-                the currency's own KES 800 deposit floor, which the server would
-                refuse. Paying the package price is the amount that is always valid.
-              */}
-              <PayByMpesa
-                tier={tier}
-                currency={currency}
-                defaultPhone={defaultPhone}
-                onActivated={onPurchased}
-                collapsed={affordable}
-              />
-
-              {!affordable ? (
-                <p className="text-center text-xs text-muted-foreground">
-                  Your wallet has {formatMoney(balance, currency)}. Pay the package price directly from
-                  M-Pesa and {tier.name} activates itself once the payment clears.
+            <>
+              <Button className="w-full" size="lg" onClick={() => setDialogOpen(true)}>
+                <Sparkles className="h-4 w-4" aria-hidden />
+                BUY
+              </Button>
+              {balance < tier.price ? (
+                <p className="text-center text-[11px] text-muted-foreground">
+                  Pay the package price directly from M-Pesa — {tier.name} activates itself once the
+                  payment clears.
                 </p>
-              ) : null}
-            </div>
+              ) : (
+                <p className="text-center text-[11px] text-muted-foreground">
+                  {formatMoney(balance, currency, { decimals: 0 })} available in your wallet.
+                </p>
+              )}
+            </>
           )}
         </div>
       </CardContent>
+
+      <PackagePurchaseDialog
+        tier={tier}
+        currency={currency}
+        balance={balance}
+        defaultPhone={defaultPhone}
+        country={country}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onActivated={onChanged}
+      />
     </Card>
   );
 }
@@ -657,19 +704,19 @@ export function PackagesCatalogue({
   currency,
   balance,
   defaultPhone,
-  bonusTiers,
+  country,
 }: {
-  tiers: PackageWithUsage[];
+  tiers: CataloguePackage[];
   currency: string;
   balance: number;
-  /** The number on the profile, pre-filled into the M-Pesa prompt — editable. */
+  /** The number on the profile, pre-filled into the prompt — editable. */
   defaultPhone: string;
-  bonusTiers: DepositBonusTier[];
+  country: string;
 }) {
   const router = useRouter();
 
   /*
-    Stable identity, because it is a dependency of the payment component's polling
+    Stable identity, because it is a dependency of the payment dialog's polling
     effect: a new function every render would tear that interval down before its
     first tick and no payment would ever be seen to complete.
   */
@@ -678,7 +725,7 @@ export function PackagesCatalogue({
   if (tiers.length === 0) {
     return (
       <EmptyState
-        icon={PackageIcon}
+        icon={PlayCircle}
         title="No packages available right now"
         description="Packages appear here as soon as an administrator publishes them."
       />
@@ -686,16 +733,16 @@ export function PackagesCatalogue({
   }
 
   return (
-    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {tiers.map((tier) => (
-        <TierCard
+        <PackageCard
           key={tier.id}
           tier={tier}
           currency={currency}
           balance={balance}
           defaultPhone={defaultPhone}
-          bonusTiers={bonusTiers}
-          onPurchased={refresh}
+          country={country}
+          onChanged={refresh}
         />
       ))}
     </div>

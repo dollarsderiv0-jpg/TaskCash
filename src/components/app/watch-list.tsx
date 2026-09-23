@@ -58,10 +58,19 @@ export function WatchList({
   videos,
   currency,
   total,
+  packageId = null,
 }: {
   videos: WatchListItem[];
   currency: string;
   total: number;
+  /**
+   * Set when the list is showing ONE package's videos.
+   *
+   * Passed to the paging request as well as used for display: without it, "show
+   * more" would append videos from the whole catalogue underneath a heading that
+   * names a single package.
+   */
+  packageId?: string | null;
 }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [extra, setExtra] = React.useState<WatchListItem[]>([]);
@@ -90,8 +99,11 @@ export function WatchList({
 
     // No limit is sent: the server applies its own page size, so this component
     // can never widen the page and re-create the payload problem it exists to fix.
+    const query = new URLSearchParams({ offset: String(items.length) });
+    if (packageId) query.set("packageId", packageId);
+
     const response = await apiRequest<{ videos: WatchCardSource[]; total: number }>(
-      `/api/videos?offset=${items.length}`,
+      `/api/videos?${query.toString()}`,
     );
 
     setLoadingMore(false);

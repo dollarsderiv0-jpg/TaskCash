@@ -44,6 +44,36 @@ function num(value: unknown): number {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * One video, as a package card shows it: its title and what THIS tier pays.
+ *
+ * The rate is `package_videos.reward_amount` (migration 0020) and not the
+ * video's global figure, because since 0020 the same video may pay differently
+ * under different tiers. `video_complete_session` resolves the same way, so the
+ * number on the card is the number the ledger will post.
+ */
+export type CatalogueVideo = {
+  id: string;
+  title: string;
+  rewardAmount: number;
+};
+
+/** The buyer's view of a tier, including the videos it unlocks. */
+export type CataloguePackage = PackageWithUsage & {
+  /** The tier's videos, in the operator's order. ACTIVE videos only. */
+  videos: CatalogueVideo[];
+  /**
+   * Whether the purchase has lapsed, decided by the SERVER's clock.
+   *
+   * `expiresAt` alone forces the card to compare a timestamp against whatever
+   * the device believes the time is, and a phone whose clock is a day slow would
+   * show a finished package as live. The database treats a lapsed purchase as
+   * absent (`package_daily_usage`), so the card must agree with the database
+   * rather than with the device.
+   */
+  expired: boolean;
+};
+
+/**
  * The published tiers, each annotated with what it means for THIS user.
  *
  * Read through the caller-scoped client, so RLS decides what is visible: only
@@ -54,7 +84,7 @@ function num(value: unknown): number {
  * function must never be called with a user id taken from a request.
  */
 export async function listPackageCatalogue(userId: string): Promise<{
-  packages: PackageWithUsage[];
+  packages: CataloguePackage[];
   available: boolean;
   serverTime: string;
 }> {
@@ -79,25 +109,85 @@ export async function listPackageCatalogue(userId: string): Promise<{
 
   const ids = tiers.map((t) => t.id);
 
-  const [purchasesRes, videoCountsRes] = await Promise.all([
+  const [purchasesRes, videoRowsRes] = await Promise.all([
     supabase
       .from("user_packages")
       .select("*")
       .eq("user_id", userId)
       .eq("status", "ACTIVE"),
-    supabase.from("package_videos").select("package_id").in("package_id", ids),
+    supabase
+      .from("package_videos")
+      .select("package_id, video_id, reward_amount, sort_order")
+      .in("package_id", ids),
   ]);
 
   if (purchasesRes.error && !isMissingTable(purchasesRes.error)) throw purchasesRes.error;
-  if (videoCountsRes.error && !isMissingTable(videoCountsRes.error)) throw videoCountsRes.error;
+  if (videoRowsRes.error && !isMissingTable(videoRowsRes.error)) throw videoRowsRes.error;
 
   const purchases = new Map(
     ((purchasesRes.data ?? []) as UserPackage[]).map((p) => [p.package_id, p]),
   );
 
-  const videoCounts = new Map<string, number>();
-  for (const row of (videoCountsRes.data ?? []) as { package_id: string }[]) {
-    videoCounts.set(row.package_id, (videoCounts.get(row.package_id) ?? 0) + 1);
+  const linkRows = (videoRowsRes.data ?? []) as {
+    package_id: string;
+    video_id: string;
+    reward_amount: number | null;
+    sort_order: number;
+  }[];
+
+  /*
+    Titles come from a second query rather than an embedded select.
+
+    `package_videos(... videos(...))` would apply the videos table's own RLS
+    *inside* this request, so a tier's card could fail to render — or silently
+    lose a video — because of a policy about a table the card merely names. Two
+    plain reads keep that surface where the reader can see it.
+  */
+  const linkedVideoIds = [...new Set(linkRows.map((row) => row.video_id))];
+  const videoDetails = new Map<string, { title: string; status: string; rewardAmount: number }>();
+
+  if (linkedVideoIds.length > 0) {
+    const { data, error } = await supabase
+      .from("videos")
+      .select("id, title, status, reward_amount")
+      .in("id", linkedVideoIds);
+
+    if (error && !isMissingTable(error)) throw error;
+
+    for (const video of (data ?? []) as {
+      id: string;
+      title: string;
+      status: string;
+      reward_amount: unknown;
+    }[]) {
+      videoDetails.set(video.id, {
+        title: video.title,
+        status: video.status,
+        rewardAmount: num(video.reward_amount),
+      });
+    }
+  }
+
+  /*
+    The videos each tier actually offers, in the operator's order.
+
+    A video that is paused, or that this read cannot see, is dropped rather than
+    listed: the card exists to say what a buyer gets, and one they cannot earn
+    from is not part of that answer.
+  */
+  const videosByPackage = new Map<string, CatalogueVideo[]>();
+
+  for (const row of [...linkRows].sort((a, b) => a.sort_order - b.sort_order)) {
+    const video = videoDetails.get(row.video_id);
+    if (!video || video.status !== "ACTIVE") continue;
+
+    const bucket = videosByPackage.get(row.package_id) ?? [];
+    bucket.push({
+      id: row.video_id,
+      title: video.title,
+      rewardAmount: row.reward_amount === null ? video.rewardAmount : num(row.reward_amount),
+    });
+    videosByPackage.set(row.package_id, bucket);
   }
 
   // `package_daily_usage` is the single definition of the day boundary, so the
@@ -171,7 +261,8 @@ export async function listPackageCatalogue(userId: string): Promise<{
           ? (used?.remainingToday ?? num(purchase.daily_earning_cap))
           : num(tier.daily_earning_cap),
         resetsAt: purchase ? (used?.resetsAt ?? null) : null,
-        videoCount: videoCounts.get(tier.id) ?? 0,
+        videoCount: videosByPackage.get(tier.id)?.length ?? 0,
+        videos: videosByPackage.get(tier.id) ?? [],
         earnedTotal: used?.earnedTotal ?? 0,
         /*
           The purchase's own snapshot is what the page must show, exactly as the
@@ -182,6 +273,9 @@ export async function listPackageCatalogue(userId: string): Promise<{
           ? (used?.lifetimeRemaining ?? null)
           : (tier.lifetime_earning_cap ?? null),
         expiresAt: purchase?.expires_at ?? null,
+        expired: Boolean(
+          purchase?.expires_at && new Date(purchase.expires_at).getTime() <= Date.now(),
+        ),
       };
     }),
   };

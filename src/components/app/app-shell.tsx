@@ -39,7 +39,12 @@ const PRIMARY_NAV = [
 const SECONDARY_NAV = [
   // Packages sit with the money links rather than in the primary bar: a package
   // is bought from the wallet, not browsed like the watch page.
-  { href: "/dashboard/packages", label: "Packages", icon: PackageIcon },
+  /*
+    Points at Watch & Earn, which is where the package catalogue and its payment
+    flow now live. `/dashboard/packages` still redirects here for old links, but
+    making the navigation hop through it would be a redirect on every tap.
+  */
+  { href: "/dashboard/watch", label: "Packages", icon: PackageIcon },
   { href: "/dashboard/deposit", label: "Deposit", icon: ArrowDownToLine },
   { href: "/dashboard/withdraw", label: "Withdraw", icon: ArrowUpFromLine },
   { href: "/dashboard/redeem", label: "Redeem Code", icon: Gift },
@@ -218,7 +223,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: React.
       {/* Desktop top bar */}
       <header className="sticky top-0 z-30 hidden h-16 items-center justify-end gap-3 border-b border-border bg-background/90 px-6 backdrop-blur-lg lg:flex">
         <Button asChild variant="outline" size="sm">
-          <Link href="/dashboard/packages">Packages</Link>
+          <Link href="/dashboard/watch">Packages</Link>
         </Button>
         <Button asChild variant="outline" size="sm">
           <Link href="/dashboard/watch">Watch &amp; Earn</Link>

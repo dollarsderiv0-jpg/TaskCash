@@ -23,6 +23,13 @@ export async function GET(request: Request) {
     const page = await listAvailableVideos(session.profile.id, {
       offset: Number(params.get("offset") ?? 0),
       limit: params.get("limit") === null ? undefined : Number(params.get("limit")),
+      /*
+        Narrows the page to one tier's videos, which is what Watch & Earn shows
+        once a package is chosen. Safe to accept from a request: it only ever
+        shrinks the result, and every eligibility rule — including whether the
+        caller holds that tier — is still decided by the service.
+      */
+      packageId: params.get("packageId"),
     });
 
     return ok({

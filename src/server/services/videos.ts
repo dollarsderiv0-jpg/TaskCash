@@ -63,7 +63,7 @@ export type VideoPage = {
 
 export async function listAvailableVideos(
   userId: string,
-  options: { limit?: number; offset?: number } = {},
+  options: { limit?: number; offset?: number; packageId?: string | null } = {},
 ): Promise<VideoPage> {
   const limit = Math.min(
     MAX_PAGE_SIZE,
@@ -74,16 +74,48 @@ export async function listAvailableVideos(
   const supabase = await createServerSupabaseClient();
 
   /*
+    `packageId` narrows the catalogue to ONE tier's videos, which is what the
+    Watch & Earn page shows when the viewer taps WATCH on a package they hold.
+
+    The filtering happens by listing the tier's video ids first and constraining
+    the query with them, rather than by a join: every eligibility rule below then
+    runs unchanged over a smaller set, so there is exactly one implementation of
+    "is this video earnable" in the codebase and no second, subtly different copy
+    for package-scoped browsing.
+  */
+  let packageVideoIds: string[] | null = null;
+  if (options.packageId) {
+    const { data: links, error: linksError } = await supabase
+      .from("package_videos")
+      .select("video_id")
+      .eq("package_id", options.packageId);
+
+    if (linksError) throw linksError;
+
+    packageVideoIds = ((links ?? []) as { video_id: string }[]).map((row) => row.video_id);
+    /*
+      A tier with nothing attached returns an empty page rather than the whole
+      catalogue. Falling through to an unfiltered query is the failure that
+      matters here: it would show a buyer the entire platform while the heading
+      says their package.
+    */
+    if (packageVideoIds.length === 0) return { items: [], total: 0, offset, limit };
+  }
+
+  /*
     `count: "exact"` rides along with the page request, so the total costs no
     extra round trip; `range` is what keeps the response proportional to what is
     actually shown.
   */
-  const { data: videos, error, count } = await supabase
+  let query = supabase
     .from("videos")
     .select("*", { count: "exact" })
     .eq("status", "ACTIVE")
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
+    .order("created_at", { ascending: false });
+
+  if (packageVideoIds) query = query.in("id", packageVideoIds);
+
+  const { data: videos, error, count } = await query.range(offset, offset + limit - 1);
 
   if (error) throw error;
   const list = (videos ?? []) as Video[];
