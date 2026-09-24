@@ -8,6 +8,7 @@ import {
   publicEnv,
 } from "@/lib/env";
 import { paymentProviderStatus, payoutReadiness } from "@/lib/payments/provider";
+import { readAuthEmailStatus } from "@/lib/supabase/auth-settings";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -28,10 +29,6 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   const missing = missingConfigByCategory();
-
-  const emailConfigured = ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD"].every(
-    (key) => Boolean(process.env[key]?.trim()),
-  );
 
   // Cheap reachability + schema probe: `system_settings` is created by the
   // first migrations, so it answers both "can we connect" and "has the schema
@@ -57,6 +54,14 @@ export async function GET() {
 
   const payments = paymentProviderStatus();
   const payout = payoutReadiness();
+  // Read from Supabase Auth, which is the service that actually sends these
+  // emails. Deliberately NOT from SMTP_* variables: no code in this application
+  // reads them (there is no mailer here at all), so reporting them as "email
+  // configured" was a green light for the very failure it appeared to rule out.
+  const email = await readAuthEmailStatus({
+    supabaseUrl: publicEnv.supabaseUrl,
+    publishableKey: publicEnv.supabasePublishableKey,
+  });
 
   const healthy =
     missing.server.length === 0 && missing.public.length === 0 && database === "ok";
@@ -98,7 +103,10 @@ export async function GET() {
           // six things were unset when three were.
           missing: [...new Set([...payments.missingCollection, ...payments.missingPayout])],
         },
-        email: emailConfigured ? "configured" : "not_configured",
+        // Shape changed in this revision: it is an object now, not the string
+        // "configured"/"not_configured". See readAuthEmailStatus for why the
+        // old value could not be trusted and what is knowable instead.
+        email,
       },
       missing: {
         public: missing.public,
