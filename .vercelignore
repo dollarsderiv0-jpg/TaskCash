@@ -22,3 +22,8 @@ node_modules
 # Nothing here is needed to build or run the application, and it has no business
 # travelling inside a deployment's source.
 .freebuff
+
+# `apk/taskcash-pro` is a standalone UI prototype (mock data, no backend). It has
+# its own package.json and is not part of this application's build, so it must
+# not travel inside a deployment's source.
+apk

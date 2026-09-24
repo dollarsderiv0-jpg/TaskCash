@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-surface text-white antialiased;
+    /* A single very low-contrast wash keeps the flats from looking dead
+       without introducing a gradient that competes with the cards. */
+    background-image:
+      radial-gradient(900px 460px at 50% -160px, rgba(37, 99, 235, 0.16), transparent 70%),
+      radial-gradient(700px 380px at 100% 0%, rgba(244, 81, 11, 0.07), transparent 65%);
+    background-repeat: no-repeat;
+  }
+
+  /* Money must never jitter: every figure is tabular and aligned. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  ::selection {
+    background: rgba(244, 81, 11, 0.35);
+  }
+}
+
+@layer components {
+  /* The one card recipe. Variants only change surface + border colour. */
+  .tc-card {
+    @apply rounded-card border border-hairline bg-card shadow-card;
+  }
+
+  .tc-card-alt {
+    @apply rounded-card border border-hairline bg-cardAlt shadow-card;
+  }
+
+  /* Small uppercase micro-labels used above every statistic. */
+  .tc-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-muted;
+  }
+
+  .tc-value {
+    @apply tnum font-bold tracking-tight text-white;
+  }
+
+  /* Row layout used by the package table and package detail spec sheet. */
+  .tc-row {
+    @apply flex items-center justify-between gap-4 border-b border-hairline/70 py-2.5 last:border-0;
+  }
+
+  .tc-row-label {
+    @apply text-sm text-muted;
+  }
+
+  .tc-row-value {
+    @apply tnum text-sm font-semibold text-white;
+  }
+}
+
+@layer utilities {
+  /* Hides scrollbars on the horizontal stat strips on small screens. */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
